@@ -328,23 +328,23 @@ function playFrameSound(frameIdx) {
     a.play().catch(() => {});
   } catch (e) {}
 }
-// —— 背景视频：静止显示画面；点击方块 → 从对应段播放一小段（画面+音乐同步）——
+// —— 背景视频：静止显示画面；点击方块 → 从对应位置播放 0.1 秒（画面+音乐同步）——
 let muteTimer = null;   // 停止点击后自动暂停计时器
 function seekVideoFrame(frameIdx) {
   const v = els.bgVideo;
   if (!v || !v.duration || !(v.duration > 0)) return false;
   try {
-    // 歌时间点：整首歌按 videoSteps 等分，点第 i 块 → 从第 i 段播放一小段
+    // 歌时间点：整首歌按 videoSteps 等分，点第 i 块 → 从第 i 段播放 0.1 秒
     const step = v.duration / (cfg.videoSteps || 20);
     const t = frameIdx * step + 0.02;
     if (t < v.duration) {
       v.currentTime = t;
-      v.muted = false;                       // 点击 → 画面+原声一起动
+      v.muted = false;                       // 点击 → 播放 0.1s 原声（画面同步动 0.1s）
       v.volume = Math.max(0.05, cfg.volume / 100) * 0.9;
       v.play().catch(() => {});
       clearTimeout(muteTimer);
-      // 播 1.5s（点击间隔）后停回静止；连点会不断续上 → 画面和音乐连续成歌
-      muteTimer = setTimeout(() => { v.pause(); v.muted = true; }, 1500);
+      // 0.1s 后停回静止；快速连点会不断续上
+      muteTimer = setTimeout(() => { v.pause(); v.muted = true; }, 100);
       return true;
     }
   } catch (e) {}
