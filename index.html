@@ -1,0 +1,1256 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>⬇ 下落方块音游</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { height:100%; overflow:hidden; font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif; background:#0d0d17; color:#fff; user-select:none; }
+  #stage { position:relative; width:100%; height:100%; }
+  #bgVideo { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; z-index:0; opacity:.75; background:#000; }
+  #cv { display:block; position:absolute; inset:0; width:100%; height:100%; touch-action:none; z-index:1; }
+
+  /* ===== 顶部 HUD ===== */
+  #hud { position:absolute; top:0; left:0; right:0; height:58px; display:flex; align-items:center; justify-content:space-between; padding:0 14px; pointer-events:none; z-index:5; }
+  #hud .left { display:flex; align-items:baseline; gap:10px; }
+  #score { font-size:30px; font-weight:800; letter-spacing:1px; text-shadow:0 0 14px rgba(255,45,120,.8); }
+  #combo { font-size:15px; color:#ffd166; font-weight:700; opacity:0; transition:opacity .15s; }
+  #combo.show { opacity:1; }
+  #life { font-size:19px; letter-spacing:2px; }
+  #life .dead { filter:grayscale(1); opacity:.35; }
+  #hud .right { display:flex; gap:10px; pointer-events:auto; }
+  .hbtn { width:42px; height:42px; border-radius:12px; border:none; background:rgba(255,255,255,.09); color:#fff; font-size:19px; cursor:pointer; display:flex; align-items:center; justify-content:center; }
+  .hbtn:active { background:rgba(255,255,255,.22); }
+
+  /* ===== 覆盖层 ===== */
+  .overlay { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; background:rgba(10,10,22,.72); backdrop-filter:blur(6px); z-index:10; text-align:center; padding:20px; }
+  .overlay.hidden { display:none; }
+  .title { font-size:40px; font-weight:900; letter-spacing:2px; background:linear-gradient(90deg,#ff2d78,#ffd166,#00e5ff); -webkit-background-clip:text; background-clip:text; color:transparent; margin-bottom:6px; }
+  .subtitle { font-size:14px; color:#aab; margin-bottom:18px; line-height:1.7; }
+  .best { font-size:15px; color:#ffd166; margin-bottom:22px; font-weight:700; }
+  .bigbtn { min-width:210px; padding:15px 34px; font-size:19px; font-weight:800; border:none; border-radius:16px; cursor:pointer; color:#fff; background:linear-gradient(135deg,#ff2d78,#ff5e3a); box-shadow:0 6px 24px rgba(255,45,120,.45); margin:8px; }
+  .bigbtn:active { transform:scale(.96); }
+  .ghostbtn { min-width:210px; padding:13px 30px; font-size:15px; font-weight:700; border:1px solid rgba(255,255,255,.25); border-radius:16px; cursor:pointer; color:#ddd; background:rgba(255,255,255,.05); margin:6px; }
+  .tips { margin-top:20px; font-size:12px; color:#889; line-height:2; }
+  .tips b { color:#ffd166; }
+  #end-score { font-size:56px; font-weight:900; text-shadow:0 0 24px rgba(255,45,120,.7); margin:6px 0; }
+  #end-stats { font-size:15px; color:#aab; line-height:1.9; margin-bottom:20px; }
+  #paused-hint { font-size:16px; color:#fff; }
+
+  /* ===== 设置面板 ===== */
+  #settings { position:absolute; inset:0; z-index:20; background:rgba(10,10,22,.9); overflow-y:auto; padding:20px 16px 40px; display:none; }
+  #settings.open { display:block; }
+  .s-wrap { max-width:480px; margin:0 auto; }
+  .s-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
+  .s-head h2 { font-size:22px; font-weight:800; }
+  .s-head .close { width:40px; height:40px; border-radius:12px; border:none; background:rgba(255,255,255,.1); color:#fff; font-size:17px; cursor:pointer; }
+  .s-group { background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.08); border-radius:16px; padding:14px; margin-bottom:14px; }
+  .s-group h3 { font-size:15px; color:#ffd166; margin-bottom:12px; font-weight:800; }
+  .s-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; font-size:14px; gap:10px; flex-wrap:wrap; }
+  .s-row label { color:#ccd; }
+  .s-row input[type=range] { flex:1; min-width:120px; accent-color:#ff2d78; }
+  .seg { display:flex; gap:8px; flex-wrap:wrap; }
+  .seg button { padding:7px 14px; border-radius:10px; border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.05); color:#ccd; font-size:13px; cursor:pointer; }
+  .seg button.on { background:linear-gradient(135deg,#ff2d78,#ff5e3a); border-color:transparent; color:#fff; font-weight:700; }
+  .seg button.small { padding:6px 10px; font-size:12px; }
+  .swatches { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .swatch { width:30px; height:30px; border-radius:9px; cursor:pointer; border:2px solid transparent; }
+  .swatch.on { border-color:#fff; transform:scale(1.12); }
+  .swatch.cus { background:conic-gradient(#f66,#ff0,#0f0,#0ff,#66f,#f6f,#f66); }
+  input[type=color] { width:34px; height:30px; border:none; background:none; cursor:pointer; padding:0; }
+  .upbtn { padding:8px 12px; border-radius:10px; border:1px solid rgba(0,229,255,.4); background:rgba(0,229,255,.08); color:#9ff; font-size:12px; cursor:pointer; }
+  .upbtn.done { border-color:rgba(80,255,160,.5); background:rgba(80,255,160,.1); color:#8f8; }
+  .upbtn.rec { border-color:#ff2d78; background:rgba(255,45,120,.2); color:#f9f; animation:blink 1s infinite; }
+  @keyframes blink { 50% { opacity:.4; } }
+  .slot { display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap; font-size:13px; color:#aab; }
+  .slot .tag { min-width:26px; font-weight:800; color:#ffd166; }
+  .slot .fname { flex:1; font-size:12px; color:#889; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:150px; }
+  .thumb { width:44px; height:44px; border-radius:8px; object-fit:cover; border:1px solid rgba(255,255,255,.2); }
+  .hint { font-size:12px; color:#779; line-height:1.7; margin-top:6px; }
+  .hint.warn { color:#f88; }
+  #skinPrev { width:100%; height:150px; border-radius:12px; background:#151528; margin-bottom:10px; }
+  .radios { display:flex; gap:14px; flex-wrap:wrap; font-size:13px; }
+  .radios label { display:flex; align-items:center; gap:5px; color:#ccd; cursor:pointer; }
+  .radios input { accent-color:#ff2d78; }
+  .s-save { width:100%; padding:15px; font-size:17px; font-weight:800; border:none; border-radius:14px; cursor:pointer; color:#fff; background:linear-gradient(135deg,#ff2d78,#ff5e3a); }
+  .s-save:active { transform:scale(.98); }
+  input[type=text] { padding:7px 10px; border-radius:9px; border:1px solid rgba(255,255,255,.2); background:rgba(255,255,255,.07); color:#fff; font-size:14px; width:90px; text-align:center; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <video id="bgVideo" playsinline loop preload="auto"></video>
+  <canvas id="cv"></canvas>
+
+  <!-- HUD -->
+  <div id="hud">
+    <div class="left">
+      <span id="score">0</span>
+      <span id="combo"></span>
+    </div>
+    <div class="right">
+      <span id="life">❤️❤️❤️</span>
+      <button class="hbtn" id="btnPause" title="暂停 (P)">⏸</button>
+      <button class="hbtn" id="btnSet" title="设置">⚙️</button>
+    </div>
+  </div>
+
+  <!-- 开始界面 -->
+  <div class="overlay" id="ovStart">
+    <div class="title">⬇ 下落方块音游</div>
+    <div class="subtitle">方块随机从顶部落下<br>在它漏到底部前 <b style="color:#ffd166">点击/按下</b> 它！</div>
+    <div class="best" id="startBest"></div>
+    <button class="bigbtn" id="btnStart">🎮 开始游戏</button>
+    <button class="ghostbtn" id="btnOpenSet">⚙️ 自定义设置（声音 / 方块外观）</button>
+    <div class="tips">
+      🖱 鼠标 / 👆 手指：点方块　⌨ 键盘：<b>A S D F</b>（3列: ASD　5列: ASDFG）<br>
+      <b>P</b> 暂停　·　漏掉方块或点空会扣 ❤️（每 200 分 +1 ❤️）
+    </div>
+  </div>
+
+  <!-- 结束界面 -->
+  <div class="overlay hidden" id="ovEnd">
+    <div class="title">游戏结束</div>
+    <div id="end-score">0</div>
+    <div id="end-stats"></div>
+    <button class="bigbtn" id="btnAgain">🔄 再来一局</button>
+    <button class="ghostbtn" id="btnHome">🏠 返回主页</button>
+  </div>
+
+  <!-- 暂停界面 -->
+  <div class="overlay hidden" id="ovPause">
+    <div class="title">⏸ 已暂停</div>
+    <button class="bigbtn" id="btnResume">▶ 继续游戏</button>
+  </div>
+
+  <!-- 设置面板 -->
+  <div id="settings">
+    <div class="s-wrap">
+      <div class="s-head"><h2>⚙️ 自定义设置</h2><button class="close" id="btnSetClose">✕</button></div>
+
+      <div class="s-group">
+        <h3>🎵 音效设置</h3>
+        <div class="s-row"><label>音效来源</label>
+          <div class="seg" id="segSound">
+            <button data-v="synth" class="on">内置合成</button>
+            <button data-v="upload">上传音频</button>
+            <button data-v="record">录音</button>
+          </div>
+        </div>
+        <div class="s-row" id="rowSynthSkin"><label>合成音色</label>
+          <select id="synthSkin" style="padding:7px 10px;border-radius:9px;background:#1a1a30;color:#fff;border:1px solid rgba(255,255,255,.2);font-size:13px;">
+            <option value="piano">🎹 钢琴</option>
+            <option value="electro">⚡ 电子</option>
+            <option value="drum">🥁 鼓点</option>
+            <option value="marimba">🪘 木琴</option>
+          </select>
+        </div>
+        <div id="audioSlots"></div>
+        <div class="hint" id="recHint" style="display:none">🎙 录音需要 <b>https 网页</b> 或本地服务器环境（直接双击打开不支持）。录音时点一下开始、再点一下停止。</div>
+        <div class="s-row"><label>音量</label><input type="range" id="volRange" min="0" max="100" value="80"><span id="volVal" style="min-width:30px;text-align:right">80%</span></div>
+      </div>
+
+      <div class="s-group">
+        <h3>🎨 方块外观（图形可定制）</h3>
+        <div class="s-row"><label>外观类型</label>
+          <div class="seg" id="segSkin">
+            <button data-v="gradient" class="on">渐变</button>
+            <button data-v="color">纯色</button>
+            <button data-v="emoji">Emoji</button>
+            <button data-v="image">图片</button>
+          </div>
+        </div>
+        <div class="s-row" id="rowColor"><label>颜色</label>
+          <div class="swatches" id="swatches">
+            <div class="swatch on" data-c="#ff2d78"></div>
+            <div class="swatch" data-c="#00e5ff"></div>
+            <div class="swatch" data-c="#ffd166"></div>
+            <div class="swatch" data-c="#50ffa0"></div>
+            <div class="swatch" data-c="#b06bff"></div>
+            <div class="swatch" data-c="#ff7a45"></div>
+            <div class="swatch cus" id="swCus"></div>
+            <input type="color" id="cusColor" value="#ff2d78" style="display:none">
+          </div>
+        </div>
+        <div class="s-row" id="rowEmoji"><label>方块里的 Emoji</label><input type="text" id="emojiInput" maxlength="4" placeholder="🎵"></div>
+        <div class="s-row" id="rowShape"><label>形状</label>
+          <div class="seg" id="segShape">
+            <button data-v="round" class="on">圆角方块</button>
+            <button data-v="circle">圆形</button>
+            <button data-v="diamond">菱形</button>
+            <button data-v="hex">六边形</button>
+          </div>
+        </div>
+        <div class="s-row" id="rowImg"><label>自定义图片（做方块）</label>
+          <button class="upbtn" id="btnImg">🖼 选择图片</button>
+          <input type="file" id="imgFile" accept="image/*" style="display:none">
+          <img class="thumb" id="imgThumb" style="display:none" alt="">
+          <button class="upbtn" id="btnImgClear" style="display:none">✕ 清除</button>
+        </div>
+        <canvas id="skinPrev" width="480" height="150"></canvas>
+        <div class="hint">💡 想用「你干嘛~」这类梗图当方块？上传图片后会自动铺满方块形状。图片建议 <b>正方形</b>。</div>
+      </div>
+
+      <div class="s-group">
+        <h3>🎯 游戏难度</h3>
+        <div class="s-row"><label>轨道数</label>
+          <div class="seg" id="segCols">
+            <button data-v="3">3 列</button>
+            <button data-v="4" class="on">4 列</button>
+            <button data-v="5">5 列</button>
+          </div>
+        </div>
+        <div class="s-row"><label>下落速度</label><input type="range" id="speedRange" min="1" max="10" value="5"><span id="speedVal" style="min-width:24px;text-align:right">5</span></div>
+        <div class="s-row"><label>严格模式（点空也扣 ❤️）</label><input type="checkbox" id="strictChk"></div>
+      </div>
+
+      <div class="s-group">
+        <h3>🎬 视频方块模式（素材版）</h3>
+        <div class="s-row"><label>开启：背景播放视频，方块=视频画面，点击=原声融合</label><input type="checkbox" id="videoChk"></div>
+        <div class="s-row" id="rowSteps"><label>点几下连成一首歌</label><input type="range" id="stepsRange" min="10" max="40" value="20"><span id="stepsVal" style="min-width:24px;text-align:right">20</span></div>
+        <div class="hint" id="videoInfo"></div>
+        <div class="hint warn">开启后：背景播放原视频（含原声），方块按歌曲段落顺序出现；点满「点几下连成歌」的次数，就能听完整首歌！</div>
+      </div>
+
+      <button class="s-save" id="btnSaveSet">✔ 保存设置</button>
+      <div class="hint" style="margin-top:10px;text-align:center">设置会自动记住，下次打开还在</div>
+    </div>
+  </div>
+</div>
+
+<!-- 视频素材清单（可选）：video_assets/manifest.js 不存在时自动忽略 -->
+<script src="video_assets/manifest.js" onerror="window.VIDEO_MANIFEST = null;"></script>
+<script>
+'use strict';
+/* =========================================================
+   下落方块音游 - 单文件版
+   玩法：方块随机下落，点击/按键消除并出声
+   定制：音效（合成/上传/录音）+ 方块外观（颜色/形状/emoji/图片）
+   ========================================================= */
+// —— 调试辅助（对玩家无影响，用于自动化测试）——
+window.__errs = [];
+window.addEventListener('error', e => { window.__errs.push(String(e.message)); });
+
+// ================= DOM =================
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const $ = id => document.getElementById(id);
+const stage = $('stage');
+const hud = $('hud');
+const els = {
+  score: $('score'), combo: $('combo'), life: $('life'),
+  ovStart: $('ovStart'), ovEnd: $('ovEnd'), ovPause: $('ovPause'),
+  endScore: $('end-score'), endStats: $('end-stats'),
+  startBest: $('startBest'), settings: $('settings'),
+ audioSlots: $('audioSlots'), recHint: $('recHint'),
+ volVal: $('volVal'), speedVal: $('speedVal'),
+ skinPrev: $('skinPrev'), imgThumb: $('imgThumb'),
+ videoChk: $('videoChk'), videoInfo: $('videoInfo'),
+ stepsVal: $('stepsVal'),
+ bgVideo: $('bgVideo')
+ };
+const spv = els.skinPrev.getContext('2d');
+
+// ================= 设置 =================
+const DEFAULTS = {
+  soundMode: 'synth',     // synth | upload | record
+  synthSkin: 'piano',     // piano | electro | drum | marimba
+  volume: 80,
+  skinType: 'gradient',   // gradient | color | emoji | image
+  color: '#ff2d78',
+  emoji: '🎵',
+  shape: 'round',         // round | circle | diamond | hex
+  img: null,              // dataURL
+  cols: 4,
+  speed: 5,
+  videoSteps: 20,       // 点击几下连成一首歌（视频模式下）
+  strict: false,
+  videoMode: true,      // 视频方块模式（素材版），默认开启（无素材时自动失效）
+  best: 0
+};
+let cfg = loadCfg();
+function loadCfg() {
+  try {
+    const raw = localStorage.getItem('blockgame_cfg');
+    if (!raw) return { ...DEFAULTS };
+    const o = JSON.parse(raw);
+    return { ...DEFAULTS, ...o };
+  } catch (e) { return { ...DEFAULTS }; }
+}
+function saveCfg() {
+  try { localStorage.setItem('blockgame_cfg', JSON.stringify(cfg)); } catch (e) {}
+}
+
+// ================= 游戏状态 =================
+const S = {
+  screen: 'menu',          // menu | playing | paused | over
+  score: 0, combo: 0, maxCombo: 0,
+  life: 3, maxLife: 3,
+  blocks: [],              // {col,x,y,size,speed,state,hitT,seed}
+  particles: [],           // {x,y,vx,vy,life,max,color,size}
+  floaters: [],            // {x,y,text,life,color}
+  spawnTimer: 0,
+  shake: 0, flash: 0,
+  frameCounter: 0,     // 视频模式：下一块使用的视频片段序号
+  lastT: 0
+};
+
+// ================= 视频素材（video_assets/ 可选） =================
+let videoAssets = null; // {m: manifest, frames: [Image]}
+function videoActive() { return cfg.videoMode && videoAssets && videoAssets.frames.length > 0; }
+function loadVideoAssets() {
+  if (!window.VIDEO_MANIFEST) return;
+  const m = window.VIDEO_MANIFEST;
+  if (!m || !m.count) return;
+  videoAssets = { m, frames: [] };
+  for (let i = 0; i < m.count; i++) {
+    const idx = String(i + 1).padStart(m.framePad || 4, '0');
+    const img = new Image();
+    img.src = m.frameDir + idx + '.' + m.frameExt;
+    videoAssets.frames.push(img);
+  }
+  // 背景视频（画面 + 原声）
+  if (m.bg && els.bgVideo) {
+    els.bgVideo.src = m.bg;
+    els.bgVideo.load();
+  }
+}
+function frameSoundUrl(frameIdx) {
+  const m = videoAssets.m;
+  const idx = String(frameIdx + 1).padStart(m.soundPad || 4, '0');
+  return m.soundDir + idx + '.' + m.soundExt;
+}
+function playFrameSound(frameIdx) {
+  try {
+    const a = new Audio(frameSoundUrl(frameIdx));
+    a.volume = Math.max(0.05, cfg.volume / 100) * 0.9;
+    a.play().catch(() => {});
+  } catch (e) {}
+}
+// —— 背景视频：静止显示画面；点击方块 → 从对应段播放一小段（画面+音乐同步）——
+let muteTimer = null;   // 停止点击后自动暂停计时器
+function seekVideoFrame(frameIdx) {
+  const v = els.bgVideo;
+  if (!v || !v.duration || !(v.duration > 0)) return false;
+  try {
+    // 歌时间点：整首歌按 videoSteps 等分，点第 i 块 → 从第 i 段播放一小段
+    const step = v.duration / (cfg.videoSteps || 20);
+    const t = frameIdx * step + 0.02;
+    if (t < v.duration) {
+      v.currentTime = t;
+      v.muted = false;                       // 点击 → 画面+原声一起动
+      v.volume = Math.max(0.05, cfg.volume / 100) * 0.9;
+      v.play().catch(() => {});
+      clearTimeout(muteTimer);
+      // 播 1.5s（点击间隔）后停回静止；连点会不断续上 → 画面和音乐连续成歌
+      muteTimer = setTimeout(() => { v.pause(); v.muted = true; }, 1500);
+      return true;
+    }
+  } catch (e) {}
+  return false;
+}
+function syncBgVideo(play) {
+  const v = els.bgVideo;
+  if (!v) return;
+  // 背景默认静止：不点击就不动（muted 静音，停在当前帧画面）
+  v.muted = true;
+  v.pause();
+}
+
+// ================= 画布尺寸 =================
+let W = 0, H = 0, dpr = 1;
+function resize() {
+  dpr = window.devicePixelRatio || 1;
+  W = stage.clientWidth; H = stage.clientHeight;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  cv.style.width = W + 'px'; cv.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// 轨道几何
+function colW() { return W / cfg.cols; }
+function blockSize() { return Math.min(colW() * 0.84, H * 0.14); }
+function judgeY() { return H - 90; }
+
+// ================= 音频系统 =================
+let actx = null, master = null;
+const audioBuffers = { custom: [null,null,null,null,null], rec: [null,null,null,null,null] };
+const fileNames = { custom: ['','','','',''], rec: ['','','','',''] };
+
+function ensureAudio() {
+  if (!actx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return false;
+    actx = new AC();
+    master = actx.createGain();
+    master.gain.value = cfg.volume / 100;
+    master.connect(actx.destination);
+  }
+  if (actx.state === 'suspended') actx.resume();
+  return true;
+}
+function setVolume(v) { if (master) master.gain.value = v / 100; }
+
+// —— 合成音 ——
+function playSynth(combo) {
+  if (!ensureAudio()) return;
+  const t = actx.currentTime;
+  // 五声音阶 C5 D5 E5 G5 A5 C6（连击越高音越高）
+  const scale = [523.25, 587.33, 659.25, 783.99, 880.00, 1046.5];
+  const freq = scale[combo % scale.length];
+  const skin = cfg.synthSkin;
+  if (skin === 'drum') {
+    // 鼓点：噪声 + 低频音头
+    playDrum(t);
+    return;
+  }
+  const osc = actx.createOscillator();
+  const g = actx.createGain();
+  osc.connect(g); g.connect(master);
+  osc.frequency.value = freq;
+  if (skin === 'piano') {
+    osc.type = 'sine';
+    const g2 = actx.createGain();
+    const osc2 = actx.createOscillator();
+    osc2.type = 'sine'; osc2.frequency.value = freq * 2;
+    osc2.connect(g2); g2.connect(master);
+    g2.gain.setValueAtTime(0.25, t);
+    g2.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+    osc2.start(t); osc2.stop(t + 0.55);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.9, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+    osc.start(t); osc.stop(t + 0.65);
+  } else if (skin === 'electro') {
+    osc.type = 'sawtooth';
+    const f = actx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 1500;
+    osc.connect(f); f.connect(g); g.connect(master);
+    g.gain.setValueAtTime(0.6, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+    osc.start(t); osc.stop(t + 0.3);
+  } else { // marimba
+    osc.type = 'triangle';
+    g.gain.setValueAtTime(0.8, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+    osc.start(t); osc.stop(t + 0.2);
+  }
+}
+function playDrum(t) {
+  // 噪声底鼓
+  const len = actx.sampleRate * 0.09;
+  const buf = actx.createBuffer(1, len, actx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+  const src = actx.createBufferSource(); src.buffer = buf;
+  const f = actx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 900;
+  const g = actx.createGain(); g.gain.value = 0.9;
+  src.connect(f); f.connect(g); g.connect(master);
+  src.start(t);
+  // 低频音头
+  const o = actx.createOscillator(); o.type = 'sine'; o.frequency.setValueAtTime(180, t); o.frequency.exponentialRampToValueAtTime(50, t + 0.08);
+  const g2 = actx.createGain(); g2.gain.setValueAtTime(0.8, t); g2.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+  o.connect(g2); g2.connect(master); o.start(t); o.stop(t + 0.12);
+}
+function playMissSound() {
+  if (!ensureAudio()) return;
+  const t = actx.currentTime;
+  const o = actx.createOscillator(); o.type = 'square'; o.frequency.setValueAtTime(160, t); o.frequency.exponentialRampToValueAtTime(70, t + 0.2);
+  const g = actx.createGain(); g.gain.setValueAtTime(0.35, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t + 0.3);
+}
+
+// —— 播放命中音（合成/自定义/录音 统一入口）——
+function playHitSound(col, combo) {
+  if (!ensureAudio()) return;
+  if (cfg.soundMode === 'upload') {
+    const b = audioBuffers.custom[col];
+    if (b) { playBuffer(b, col); return; }
+  } else if (cfg.soundMode === 'record') {
+    const b = audioBuffers.rec[col];
+    if (b) { playBuffer(b, col); return; }
+  }
+  playSynth(combo);
+}
+function playBuffer(buf, col) {
+  const src = actx.createBufferSource();
+  src.buffer = buf;
+  const g = actx.createGain(); g.gain.value = 0.9;
+  src.connect(g); g.connect(master);
+  src.start();
+}
+
+// —— 音频文件上传 ——
+window.__audit = [];
+function loadAudioFile(file, slot, type) {
+  window.__audit.push('loadAudioFile: ' + file.name + ' slot=' + slot + ' type=' + type);
+  const fr = new FileReader();
+  fr.onload = e => {
+    window.__audit.push('fr.onload bytes=' + e.target.result.byteLength);
+    actx = actx || (window.AudioContext ? new AudioContext() : null);
+    if (!actx) { window.__audit.push('no actx'); return; }
+    actx.decodeAudioData(e.target.result, buf => {
+      window.__audit.push('decode OK');
+      audioBuffers[type][slot] = buf;
+      fileNames[type][slot] = file.name;
+      if (cfg.soundMode === 'upload') renderAudioSlots(); // type 恒为 custom
+    }, () => {
+      window.__audit.push('decode FAIL');
+      alert('音频解码失败，请换一个 mp3/wav 文件');
+    });
+  };
+  fr.onerror = () => { window.__audit.push('fr.onerror'); };
+  fr.readAsArrayBuffer(file);
+}
+
+// —— 录音 ——
+let recorder = null, recStream = null, recSlot = -1, recType = '', recChunks = [];
+function recSupported() { return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia); }
+async function toggleRecord(slot, type) {
+  if (!ensureAudio()) return;
+  if (recorder && recSlot === slot && recType === type) { stopRecord(); return; }
+  if (recorder) stopRecord();
+  if (!recSupported()) {
+    alert('当前环境不支持录音（file:// 直接打开不行）。\n请把游戏部署到 https 网页，或用本地服务器打开。');
+    return;
+  }
+  try {
+    recStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) { alert('无法使用麦克风，请检查权限设置'); return; }
+  recSlot = slot; recType = type; recChunks = [];
+  recorder = new MediaRecorder(recStream);
+  recorder.ondataavailable = e => { if (e.data.size) recChunks.push(e.data); };
+  recorder.onstop = () => {
+    const blob = new Blob(recChunks, { type: 'audio/webm' });
+    const fr = new FileReader();
+    fr.onload = ev => {
+      actx.decodeAudioData(ev.target.result, buf => {
+        audioBuffers[type][slot] = buf;
+        fileNames[type][slot] = '录音 ' + (slot + 1);
+        if (cfg.soundMode === 'record') renderAudioSlots(); // type 恒为 rec
+      }, () => alert('录音解码失败'));
+    };
+    fr.readAsArrayBuffer(blob);
+    recStream.getTracks().forEach(t => t.stop());
+  };
+  recorder.start();
+  // 10 秒自动停止
+  setTimeout(() => { if (recorder && recorder.state === 'recording') stopRecord(); }, 10000);
+  renderAudioSlots();
+}
+function stopRecord() {
+  if (recorder && recorder.state === 'recording') recorder.stop();
+  recorder = null; recSlot = -1; recType = '';
+  renderAudioSlots();
+}
+
+// ================= 方块生成与外观 =================
+function blockColor(col, seed) {
+  if (cfg.skinType === 'gradient') {
+    const hues = [200, 320, 45, 150, 265];
+    const h = hues[col % hues.length];
+    return `hsl(${h}, 85%, ${58 + (seed % 10)}%)`;
+  }
+  return cfg.color;
+}
+
+function spawnBlock(demo) {
+  // 布局：每排只生成 1 个方块（随机列），行距由 currentInterval 控制 → 屏幕形成整齐的多排网格
+  let col = Math.floor(Math.random() * cfg.cols);
+  for (let i = 0; i < 5; i++) {
+    // 该列顶部若有刚落下的方块则换列（避免重叠）
+    const clash = S.blocks.some(b => b.col === col && b.state === 'falling' && b.y < blockSize() * 0.6);
+    if (!clash) break;
+    col = Math.floor(Math.random() * cfg.cols);
+  }
+  spawnBlockAt(col, demo);
+}
+function spawnBlockAt(col, demo) {
+  const sz = blockSize();
+  const b = {
+    col, x: col * colW() + (colW() - sz) / 2,
+    y: -sz, size: sz, speed: 0,
+    state: 'falling', hitT: 0, seed: Math.floor(Math.random() * 100),
+    demo: !!demo
+  };
+  if (videoActive()) {
+    // 每块代表一个"歌时间点"，共 videoSteps 个，点满即听完整首歌
+    b.frameIdx = S.frameCounter % (cfg.videoSteps || 20);
+    S.frameCounter++;
+  }
+  S.blocks.push(b);
+}
+
+function speedBase() { return 200 + cfg.speed * 40; }
+function currentSpeed() { return speedBase() * (1 + Math.min(S.score * 0.015, 1.3)); }
+function rowH() { return blockSize() + 10; }   // 行距 = 方块高 + 间隙
+function currentInterval() {
+  // 行距 / 速度：无论速度快慢，方块都按固定行距整齐排列（一排一个、多排滚动）
+  return Math.max(0.05, rowH() / currentSpeed());
+}
+
+function hitBlock(b) {
+  b.state = 'hit'; b.hitT = 0;
+  S.score++; S.combo++; S.maxCombo = Math.max(S.maxCombo, S.combo);
+  if (videoActive() && b.frameIdx !== undefined) {
+    // 声音融合：让背景视频跳到该帧时刻播放原声；视频未就绪时降级为切片声音
+    const seeked = seekVideoFrame(b.frameIdx);
+    if (!seeked) playFrameSound(b.frameIdx);
+  } else {
+    playHitSound(b.col, S.combo);
+  }
+  // 粒子
+  const c = blockColor(b.col, b.seed);
+  for (let i = 0; i < 10; i++) {
+    const ang = Math.random() * Math.PI * 2, sp = 60 + Math.random() * 220;
+    S.particles.push({ x: b.x + b.size / 2, y: b.y + b.size / 2, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 60, life: 0.45, max: 0.45, color: c, size: 3 + Math.random() * 4 });
+  }
+  // 漂浮文字
+  S.floaters.push({ x: b.x + b.size / 2, y: b.y, text: S.combo > 1 ? 'x' + S.combo : '+1', life: 0.8, color: S.combo > 10 ? '#ffd166' : '#fff' });
+  // 每 200 分 +1 命（上限 5）
+  if (S.score % 200 === 0 && S.life < 5) { S.life++; updateHUD(); }
+  updateHUD();
+}
+
+function missBlock(b) {
+  if (b.state !== 'falling') return;
+  b.state = 'miss'; b.hitT = 0;
+  S.life--; S.combo = 0;
+  S.shake = 0.35; S.flash = 0.3;
+  playMissSound();
+  updateHUD();
+  if (S.life <= 0) { setTimeout(gameOver, 350); }
+}
+
+// ================= 更新 =================
+function update(dt) {
+  if (S.screen === 'paused') return;
+
+  // 生成
+  if (S.screen === 'playing' || S.screen === 'menu') {
+    S.spawnTimer -= dt;
+    if (S.spawnTimer <= 0) {
+      spawnBlock(S.screen === 'menu');
+      // 行距/速度：保持整齐多排布局
+      S.spawnTimer = S.screen === 'menu' ? 0.7 : currentInterval();
+    }
+  }
+
+  // 方块
+  for (let i = S.blocks.length - 1; i >= 0; i--) {
+    const b = S.blocks[i];
+    if (b.state === 'falling') {
+      b.speed = S.screen === 'menu' ? speedBase() * 0.5 : currentSpeed() * (videoActive() ? 0.8 : 1);
+      b.y += b.speed * dt;
+      if (S.screen === 'playing' && b.y - b.size / 2 > judgeY()) {
+        missBlock(b);
+      } else if (S.screen === 'menu' && b.y - b.size > H) {
+        S.blocks.splice(i, 1); continue;
+      }
+    } else if (b.state === 'hit' || b.state === 'miss') {
+      b.hitT += dt;
+      if (b.hitT > 0.3) { S.blocks.splice(i, 1); continue; }
+      if (b.state === 'hit') b.y += b.speed * 3 * dt; // 命中后加速下坠
+    }
+  }
+
+  // 粒子
+  for (let i = S.particles.length - 1; i >= 0; i--) {
+    const p = S.particles[i];
+    p.life -= dt;
+    if (p.life <= 0) { S.particles.splice(i, 1); continue; }
+    p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 500 * dt;
+  }
+  // 漂浮文字
+  for (let i = S.floaters.length - 1; i >= 0; i--) {
+    const f = S.floaters[i];
+    f.life -= dt;
+    if (f.life <= 0) { S.floaters.splice(i, 1); continue; }
+    f.y -= 55 * dt;
+  }
+  // 震动 / 红闪衰减
+  if (S.shake > 0) S.shake -= dt;
+  if (S.flash > 0) S.flash -= dt;
+}
+
+// ================= 渲染 =================
+function drawShape(x, y, size, shape) {
+  const r = size / 2;
+  ctx.beginPath();
+  if (shape === 'circle') {
+    ctx.arc(x + r, y + r, r * 0.92, 0, Math.PI * 2);
+  } else if (shape === 'diamond') {
+    ctx.moveTo(x + r, y + size * 0.08);
+    ctx.lineTo(x + size * 0.92, y + r);
+    ctx.lineTo(x + r, y + size * 0.92);
+    ctx.lineTo(x + size * 0.08, y + r);
+    ctx.closePath();
+  } else if (shape === 'hex') {
+    const cx = x + r, cy = y + r, rr = r * 0.95;
+    for (let i = 0; i < 6; i++) {
+      const a = Math.PI / 6 + i * Math.PI / 3;
+      const px = cx + rr * Math.cos(a), py = cy + rr * Math.sin(a);
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+  } else {
+    const rr = size * 0.18;
+    ctx.moveTo(x + rr, y);
+    ctx.arcTo(x + size, y, x + size, y + size, rr);
+    ctx.arcTo(x + size, y + size, x, y + size, rr);
+    ctx.arcTo(x, y + size, x, y, rr);
+    ctx.arcTo(x, y, x + size, y, rr);
+    ctx.closePath();
+  }
+}
+
+function drawBlock(b) {
+  const { x, y, size } = b;
+  const col = b.col;
+  let alpha = 1;
+  if (b.state === 'hit') alpha = Math.max(0, 1 - b.hitT / 0.3) * 0.9;
+  if (b.state === 'miss') alpha = Math.max(0, 1 - b.hitT / 0.25) * 0.6;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  const shape = cfg.shape;
+  // 视频模式：方块 = 视频帧画面
+  if (b.frameIdx !== undefined && videoAssets && videoAssets.frames[b.frameIdx]) {
+    const img = videoAssets.frames[b.frameIdx];
+    ctx.save();
+    drawShape(x, y, size, shape);
+    ctx.clip();
+    if (img.complete && img.naturalWidth > 0) {
+      const s = Math.max(size / img.naturalWidth, size / img.naturalHeight);
+      const iw = img.naturalWidth * s, ih = img.naturalHeight * s;
+      ctx.drawImage(img, x + (size - iw) / 2, y + (size - ih) / 2, iw, ih);
+    } else {
+      ctx.fillStyle = 'rgba(120,120,140,.5)';
+      ctx.fillRect(x, y, size, size);
+    }
+    ctx.restore();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 2;
+    drawShape(x, y, size, shape); ctx.stroke();
+  } else
+  if (cfg.skinType === 'image' && cfg.img) {
+    const img = cfg.imgObj;
+    if (img && img.complete) {
+      ctx.save();
+      drawShape(x, y, size, shape);
+      ctx.clip();
+      // cover 铺满
+      const s = Math.max(size / img.width, size / img.height) * (img.width > img.height ? 1 : 1);
+      const iw = img.width * s, ih = img.height * s;
+      ctx.drawImage(img, x + (size - iw) / 2, y + (size - ih) / 2, iw, ih);
+      ctx.restore();
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 2;
+      drawShape(x, y, size, shape); ctx.stroke();
+    }
+  } else if (cfg.skinType === 'emoji') {
+    ctx.fillStyle = 'rgba(255,255,255,.14)';
+    drawShape(x, y, size, shape); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.lineWidth = 2;
+    drawShape(x, y, size, shape); ctx.stroke();
+    ctx.font = (size * 0.62) + 'px "Segoe UI Emoji","Apple Color Emoji",sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(cfg.emoji || '🎵', x + size / 2, y + size / 2 + size * 0.04);
+  } else {
+    const c = blockColor(col, b.seed);
+    const grad = ctx.createLinearGradient(x, y, x, y + size);
+    grad.addColorStop(0, c);
+    grad.addColorStop(1, shadeColor(c, -30));
+    ctx.fillStyle = grad;
+    drawShape(x, y, size, shape); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 2;
+    drawShape(x, y, size, shape); ctx.stroke();
+    // 顶部高光
+    ctx.fillStyle = 'rgba(255,255,255,.22)';
+    ctx.beginPath();
+    ctx.ellipse(x + size * 0.3, y + size * 0.22, size * 0.18, size * 0.09, -0.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function shadeColor(color, amt) {
+  // 支持 hsl(...) 和 #rrggbb
+  if (color.startsWith('hsl')) {
+    const m = color.match(/[\d.]+/g);
+    const [h, s, l] = m.map(Number);
+    return `hsl(${h}, ${s}%, ${Math.max(0, Math.min(100, l + amt / 2))}%)`;
+  }
+  if (color.startsWith('#')) {
+    const n = parseInt(color.slice(1), 16);
+    const r = Math.max(0, Math.min(255, ((n >> 16) & 255) + amt));
+    const g = Math.max(0, Math.min(255, ((n >> 8) & 255) + amt));
+    const b = Math.max(0, Math.min(255, (n & 255) + amt));
+    return `rgb(${r},${g},${b})`;
+  }
+  return color;
+}
+
+function render() {
+  // 背景：视频模式下用半透明深色遮罩（底下是背景视频），否则用渐变
+  if (videoActive() && els.bgVideo) {
+    ctx.fillStyle = 'rgba(8,8,18,0.5)';
+    ctx.fillRect(0, 0, W, H);
+  } else {
+    const bg = ctx.createLinearGradient(0, 0, 0, H);
+    bg.addColorStop(0, '#0d0d17');
+    bg.addColorStop(0.6, '#131025');
+    bg.addColorStop(1, '#1a0f2e');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // 轨道线
+  ctx.strokeStyle = 'rgba(255,255,255,.07)';
+  ctx.lineWidth = 1;
+  for (let i = 1; i < cfg.cols; i++) {
+    const x = i * colW();
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+  }
+
+  // 判定线
+  const jy = judgeY();
+  const lg = ctx.createLinearGradient(0, jy - 8, 0, jy + 8);
+  lg.addColorStop(0, 'rgba(255,45,120,0)');
+  lg.addColorStop(0.5, 'rgba(255,45,120,.75)');
+  lg.addColorStop(1, 'rgba(255,45,120,0)');
+  ctx.fillStyle = lg;
+  ctx.fillRect(0, jy - 8, W, 16);
+  ctx.strokeStyle = 'rgba(255,45,120,.9)';
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(0, jy); ctx.lineTo(W, jy); ctx.stroke();
+  // 两端箭头
+  ctx.fillStyle = 'rgba(255,45,120,.9)';
+  ctx.beginPath();
+  ctx.moveTo(0, jy - 8); ctx.lineTo(14, jy); ctx.lineTo(0, jy + 8); ctx.closePath(); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(W, jy - 8); ctx.lineTo(W - 14, jy); ctx.lineTo(W, jy + 8); ctx.closePath(); ctx.fill();
+
+  // 屏幕震动
+  if (S.shake > 0) {
+    ctx.save();
+    ctx.translate((Math.random() - 0.5) * 10 * S.shake, (Math.random() - 0.5) * 10 * S.shake);
+  }
+
+  // 方块
+  for (const b of S.blocks) drawBlock(b);
+
+  // 粒子
+  for (const p of S.particles) {
+    ctx.globalAlpha = Math.max(0, p.life / p.max);
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // 漂浮文字
+  for (const f of S.floaters) {
+    ctx.globalAlpha = Math.max(0, f.life / 0.8);
+    ctx.fillStyle = f.color;
+    ctx.font = '800 20px "Microsoft YaHei",sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(f.text, f.x, f.y);
+  }
+  ctx.globalAlpha = 1;
+
+  // 红闪
+  if (S.flash > 0) {
+    ctx.fillStyle = `rgba(255,0,60,${S.flash * 0.35})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+  if (S.shake > 0) ctx.restore();
+}
+
+// ================= 输入 =================
+function canvasPos(e) {
+  const r = cv.getBoundingClientRect();
+  const t = e.touches ? e.touches[0] : e;
+  return { x: t.clientX - r.left, y: t.clientY - r.top };
+}
+
+function handleTap(x, y) {
+  if (S.screen === 'playing') {
+    let hit = null;
+    for (const b of S.blocks) {
+      if (b.state !== 'falling') continue;
+      if (x >= b.x && x <= b.x + b.size && y >= b.y && y <= b.y + b.size) {
+        if (!hit || b.y > hit.y) hit = b; // 取最靠近判定线的
+      }
+    }
+    if (hit) {
+      hitBlock(hit);
+    } else {
+      // 点空
+      S.combo = 0; S.flash = 0.2;
+      playMissSound();
+      if (cfg.strict) { S.life--; S.shake = 0.3; updateHUD(); if (S.life <= 0) setTimeout(gameOver, 300); }
+      updateHUD();
+    }
+  }
+}
+
+cv.addEventListener('pointerdown', e => {
+  ensureAudio();
+  const p = canvasPos(e);
+  handleTap(p.x, p.y);
+});
+
+window.addEventListener('keydown', e => {
+  ensureAudio();
+  if (e.code === 'KeyP' && S.screen === 'playing') { togglePause(); return; }
+  const keys = { 3: ['KeyA','KeyS','KeyD'], 4: ['KeyA','KeyS','KeyD','KeyF'], 5: ['KeyA','KeyS','KeyD','KeyF','KeyG'] };
+  const list = keys[cfg.cols];
+  const idx = list.indexOf(e.code);
+  if (idx >= 0 && S.screen === 'playing') {
+    e.preventDefault();
+    // 命中该列最接近判定线的方块
+    let best = null;
+    for (const b of S.blocks) {
+      if (b.state !== 'falling' || b.col !== idx) continue;
+      if (!best || b.y > best.y) best = b;
+    }
+    if (best && best.y + best.size > 0) hitBlock(best);
+  }
+});
+
+// ================= HUD =================
+function updateHUD() {
+  els.score.textContent = S.score;
+  if (S.combo >= 2) { els.combo.textContent = '连击 x' + S.combo; els.combo.classList.add('show'); }
+  else els.combo.classList.remove('show');
+  let l = '';
+  for (let i = 0; i < 5; i++) l += i < S.life ? '❤️' : '<span class="dead">❤️</span>';
+  els.life.innerHTML = l;
+}
+
+// ================= 流程控制 =================
+function startGame() {
+  ensureAudio();
+  S.blocks = []; S.particles = []; S.floaters = [];
+  S.score = 0; S.combo = 0; S.maxCombo = 0;
+  S.life = 3; S.maxLife = 3;
+  S.spawnTimer = 0.6;
+  S.shake = 0; S.flash = 0;
+  // 视频模式：每局从随机时间点开始，更有新鲜感
+  S.frameCounter = videoActive() ? Math.floor(Math.random() * (cfg.videoSteps || 20)) : 0;
+  syncBgVideo(true);   // 背景视频播放
+  S.screen = 'playing';
+  els.ovStart.classList.add('hidden');
+  els.ovEnd.classList.add('hidden');
+  els.ovPause.classList.add('hidden');
+  hud.style.display = 'flex';
+  updateHUD();
+}
+
+function gameOver() {
+  S.screen = 'over';
+  syncBgVideo(false);   // 结束界面暂停背景
+  if (S.score > cfg.best) { cfg.best = S.score; saveCfg(); }
+  els.endScore.textContent = S.score;
+  els.endStats.innerHTML = '🏆 最高分：<b>' + cfg.best + '</b><br>🔥 最大连击：<b>' + S.maxCombo + '</b><br>📊 本次得分：<b>' + S.score + '</b>';
+  els.ovEnd.classList.remove('hidden');
+}
+
+function goHome() {
+  S.screen = 'menu';
+  els.ovEnd.classList.add('hidden');
+  els.ovPause.classList.add('hidden');
+  els.ovStart.classList.remove('hidden');
+  els.startBest.textContent = '🏆 历史最高分：' + cfg.best;
+  S.blocks = []; S.particles = []; S.floaters = [];
+  S.spawnTimer = 0.3;
+  syncBgVideo(true);   // 菜单背景视频继续播放（氛围）
+  hud.style.display = 'flex';
+}
+
+function togglePause() {
+  if (S.screen === 'playing') { S.screen = 'paused'; els.ovPause.classList.remove('hidden'); }
+  else if (S.screen === 'paused') { S.screen = 'playing'; els.ovPause.classList.add('hidden'); }
+}
+
+// ================= 主循环 =================
+function loop(t) {
+  requestAnimationFrame(loop);
+  const dt = Math.min(0.05, (t - S.lastT) / 1000 || 0.016);
+  S.lastT = t;
+  update(dt);
+  render();
+}
+requestAnimationFrame(t => { S.lastT = t; requestAnimationFrame(loop); });
+
+// ================= 设置面板 UI =================
+function renderAudioSlots() {
+  const mode = cfg.soundMode;
+  const el = els.audioSlots;
+  if (mode === 'synth') { el.innerHTML = ''; els.recHint.style.display = 'none'; return; }
+  els.recHint.style.display = mode === 'record' ? 'block' : 'none';
+  const type = mode === 'upload' ? 'custom' : 'rec';
+  const label = mode === 'upload' ? '上传声音文件' : '🎙 录音';
+  let html = '<div style="font-size:13px;color:#aab;margin-bottom:8px">' + (mode === 'upload' ? '为每一列轨道上传声音（mp3/wav），点击方块时播放对应声音' : '为每一列轨道录制声音，点击方块时播放') + '</div>';
+  for (let i = 0; i < cfg.cols; i++) {
+    const fn = fileNames[type][i];
+    html += '<div class="slot"><span class="tag">轨道' + (i + 1) + '</span>';
+    if (fn) {
+      html += '<span class="fname">✓ ' + fn + '</span>';
+      html += '<button class="upbtn" data-act="play" data-slot="' + i + '">▶ 试听</button>';
+      html += '<button class="upbtn" data-act="clear" data-slot="' + i + '">✕</button>';
+    } else {
+      html += '<span class="fname" style="color:#556">未设置</span>';
+    }
+    if (mode === 'upload') {
+      html += '<label class="upbtn" style="display:inline-block">📁 选择<input type="file" accept="audio/*" data-slot="' + i + '" style="display:none"></label>';
+    } else {
+      html += '<button class="upbtn rec' + (recorder && recSlot === i ? ' rec" style="color:#fff' : '') + '" data-act="rec" data-slot="' + i + '">' + (recorder && recSlot === i && recType === type ? '⏹ 停止' : '🎙 录音') + '</button>';
+    }
+    html += '</div>';
+  }
+  el.innerHTML = html;
+
+  // 事件绑定
+  el.querySelectorAll('input[type=file]').forEach(inp => {
+    inp.addEventListener('change', () => {
+      window.__audit.push('change fired on data-slot=' + inp.dataset.slot + ' files=' + (inp.files.length));
+      if (inp.files[0]) loadAudioFile(inp.files[0], Number(inp.dataset.slot), 'custom');
+    });
+  });
+  el.querySelectorAll('button[data-act=play]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const buf = audioBuffers[type][Number(btn.dataset.slot)];
+      if (buf) { ensureAudio(); playBuffer(buf, 0); }
+    });
+  });
+  el.querySelectorAll('button[data-act=clear]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      audioBuffers[type][Number(btn.dataset.slot)] = null;
+      fileNames[type][Number(btn.dataset.slot)] = '';
+      renderAudioSlots();
+    });
+  });
+  el.querySelectorAll('button[data-act=rec]').forEach(btn => {
+    btn.addEventListener('click', () => toggleRecord(Number(btn.dataset.slot), 'rec'));
+  });
+}
+
+function renderSkinPrev() {
+  const c = spv;
+  const w = els.skinPrev.width, h = els.skinPrev.height;
+  c.clearRect(0, 0, w, h);
+  c.fillStyle = '#151528'; c.fillRect(0, 0, w, h);
+  // 画 5 个预览方块
+  const shape = cfg.shape;
+  const colors = ['#00e5ff', '#ff2d78', '#ffd166', '#50ffa0', '#b06bff'];
+  for (let i = 0; i < 5; i++) {
+    const size = 74, x = 24 + i * (w - 48) / 5, y = (h - size) / 2;
+    if (cfg.skinType === 'image' && cfg.imgObj && cfg.imgObj.complete) {
+      c.save();
+      drawShapeCtx(c, x, y, size, shape); c.clip();
+      const img = cfg.imgObj;
+      const s = Math.max(size / img.width, size / img.height);
+      c.drawImage(img, x + (size - img.width * s) / 2, y + (size - img.height * s) / 2, img.width * s, img.height * s);
+      c.restore();
+      c.strokeStyle = 'rgba(255,255,255,.5)'; c.lineWidth = 2;
+      drawShapeCtx(c, x, y, size, shape); c.stroke();
+    } else if (cfg.skinType === 'emoji') {
+      c.fillStyle = 'rgba(255,255,255,.14)';
+      drawShapeCtx(c, x, y, size, shape); c.fill();
+      c.strokeStyle = 'rgba(255,255,255,.5)'; c.lineWidth = 2;
+      drawShapeCtx(c, x, y, size, shape); c.stroke();
+      c.font = (size * 0.62) + 'px "Segoe UI Emoji","Apple Color Emoji",sans-serif';
+      c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText(cfg.emoji || '🎵', x + size / 2, y + size / 2 + size * 0.04);
+    } else {
+      const col = cfg.skinType === 'color' ? cfg.color : colors[i];
+      const g = c.createLinearGradient(x, y, x, y + size);
+      g.addColorStop(0, col);
+      g.addColorStop(1, shadeColor(col, -30));
+      c.fillStyle = g;
+      drawShapeCtx(c, x, y, size, shape); c.fill();
+      c.strokeStyle = 'rgba(255,255,255,.6)'; c.lineWidth = 2;
+      drawShapeCtx(c, x, y, size, shape); c.stroke();
+    }
+  }
+  c.fillStyle = '#ffd166';
+  c.font = '12px "Microsoft YaHei",sans-serif';
+  c.textAlign = 'center';
+  c.fillText('👆 方块预览（保存后游戏中生效）', w / 2, h - 10);
+}
+function drawShapeCtx(c, x, y, size, shape) {
+  const r = size / 2;
+  c.beginPath();
+  if (shape === 'circle') c.arc(x + r, y + r, r * 0.92, 0, Math.PI * 2);
+  else if (shape === 'diamond') {
+    c.moveTo(x + r, y + size * 0.08); c.lineTo(x + size * 0.92, y + r);
+    c.lineTo(x + r, y + size * 0.92); c.lineTo(x + size * 0.08, y + r); c.closePath();
+  } else if (shape === 'hex') {
+    const cx = x + r, cy = y + r, rr = r * 0.95;
+    for (let i = 0; i < 6; i++) {
+      const a = Math.PI / 6 + i * Math.PI / 3;
+      const px = cx + rr * Math.cos(a), py = cy + rr * Math.sin(a);
+      if (i === 0) c.moveTo(px, py); else c.lineTo(px, py);
+    }
+    c.closePath();
+  } else {
+    const rr = size * 0.18;
+    c.moveTo(x + rr, y); c.arcTo(x + size, y, x + size, y + size, rr);
+    c.arcTo(x + size, y + size, x, y + size, rr);
+    c.arcTo(x, y + size, x, y, rr); c.arcTo(x, y, x + size, y, rr); c.closePath();
+  }
+}
+
+function openSettings() {
+  ensureAudio();
+  els.settings.classList.add('open');
+  syncSettingsUI();
+}
+function closeSettings() { els.settings.classList.remove('open'); }
+
+function syncSettingsUI() {
+  // 音效来源
+  document.querySelectorAll('#segSound button').forEach(b => b.classList.toggle('on', b.dataset.v === cfg.soundMode));
+  $('synthSkin').value = cfg.synthSkin;
+  $('rowSynthSkin').style.display = cfg.soundMode === 'synth' ? 'flex' : 'none';
+  $('volRange').value = cfg.volume; els.volVal.textContent = cfg.volume + '%';
+  renderAudioSlots();
+  // 外观
+  document.querySelectorAll('#segSkin button').forEach(b => b.classList.toggle('on', b.dataset.v === cfg.skinType));
+  document.querySelectorAll('#segShape button').forEach(b => b.classList.toggle('on', b.dataset.v === cfg.shape));
+  document.querySelectorAll('#swatches .swatch').forEach(w => w.classList.toggle('on', w.dataset.c === cfg.color));
+  $('cusColor').value = cfg.color;
+  $('emojiInput').value = cfg.emoji;
+  $('rowColor').style.display = cfg.skinType === 'color' || cfg.skinType === 'gradient' ? 'flex' : 'none';
+  $('rowEmoji').style.display = cfg.skinType === 'emoji' ? 'flex' : 'none';
+  $('rowImg').style.display = cfg.skinType === 'image' ? 'flex' : 'none';
+  if (cfg.img) { els.imgThumb.src = cfg.img; els.imgThumb.style.display = 'block'; $('btnImgClear').style.display = 'inline-block'; }
+  else { els.imgThumb.style.display = 'none'; $('btnImgClear').style.display = 'none'; }
+  // 难度
+  document.querySelectorAll('#segCols button').forEach(b => b.classList.toggle('on', Number(b.dataset.v) === cfg.cols));
+  $('speedRange').value = cfg.speed; els.speedVal.textContent = cfg.speed;
+  $('strictChk').checked = cfg.strict;
+  // 视频模式
+  els.videoChk.checked = cfg.videoMode;
+  $('stepsRange').value = cfg.videoSteps || 20; els.stepsVal.textContent = cfg.videoSteps || 20;
+  if (videoAssets && videoAssets.m) {
+    const m = videoAssets.m;
+    els.videoInfo.textContent = '✅ 已找到素材：「' + m.title + '」 ' + m.count + ' 个片段（每 0.2s）· ' + m.frameExt + ' 帧 + ' + m.soundExt + ' 声音';
+    els.videoInfo.style.color = '#8f8';
+  } else {
+    els.videoInfo.textContent = '⚠️ 未找到 video_assets 素材文件夹（需要有 manifest.js + frames/ + sounds/）。没有素材时该模式自动无效。';
+    els.videoInfo.style.color = '#f88';
+  }
+  renderSkinPrev();
+}
+
+// —— 设置面板事件 ——
+$('btnSet').addEventListener('click', () => { if (S.screen === 'playing') togglePause(); openSettings(); });
+$('btnSetClose').addEventListener('click', closeSettings);
+$('btnOpenSet').addEventListener('click', openSettings);
+$('btnSaveSet').addEventListener('click', () => { saveCfg(); closeSettings(); if (S.screen === 'paused') togglePause(); });
+
+document.querySelectorAll('#segSound button').forEach(b => b.addEventListener('click', () => {
+  cfg.soundMode = b.dataset.v; syncSettingsUI();
+}));
+$('synthSkin').addEventListener('change', e => { cfg.synthSkin = e.target.value; });
+$('volRange').addEventListener('input', e => {
+  cfg.volume = Number(e.target.value); els.volVal.textContent = cfg.volume + '%';
+  setVolume(cfg.volume);
+});
+document.querySelectorAll('#segSkin button').forEach(b => b.addEventListener('click', () => {
+  cfg.skinType = b.dataset.v; syncSettingsUI();
+}));
+document.querySelectorAll('#swatches .swatch').forEach(w => w.addEventListener('click', () => {
+  const c = w.dataset.c || $('cusColor').value;
+  cfg.color = c;
+  $('cusColor').value = c;
+  document.querySelectorAll('#swatches .swatch').forEach(x => x.classList.toggle('on', x === w || x.dataset.c === c));
+  renderSkinPrev();
+}));
+$('swCus').addEventListener('click', () => $('cusColor').click());
+$('cusColor').addEventListener('input', e => {
+  cfg.color = e.target.value;
+  document.querySelectorAll('#swatches .swatch').forEach(x => x.classList.remove('on'));
+  $('swCus').classList.add('on');
+  renderSkinPrev();
+});
+$('emojiInput').addEventListener('input', e => { cfg.emoji = e.target.value || '🎵'; renderSkinPrev(); });
+document.querySelectorAll('#segShape button').forEach(b => b.addEventListener('click', () => {
+  cfg.shape = b.dataset.v; syncSettingsUI(); renderSkinPrev();
+}));
+document.querySelectorAll('#segCols button').forEach(b => b.addEventListener('click', () => {
+  cfg.cols = Number(b.dataset.v); syncSettingsUI();
+}));
+$('speedRange').addEventListener('input', e => { cfg.speed = Number(e.target.value); els.speedVal.textContent = cfg.speed; });
+$('strictChk').addEventListener('change', e => { cfg.strict = e.target.checked; });
+$('videoChk').addEventListener('change', e => {
+  cfg.videoMode = e.target.checked;
+  syncBgVideo(cfg.videoMode);
+});
+$('stepsRange').addEventListener('input', e => {
+  cfg.videoSteps = Number(e.target.value); els.stepsVal.textContent = cfg.videoSteps;
+});
+
+$('btnImg').addEventListener('click', () => $('imgFile').click());
+$('imgFile').addEventListener('change', e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const fr = new FileReader();
+  fr.onload = ev => {
+    cfg.img = ev.target.result;
+    const img = new Image();
+    img.onload = () => { cfg.imgObj = img; syncSettingsUI(); renderSkinPrev(); };
+    img.src = cfg.img;
+  };
+  fr.readAsDataURL(f);
+});
+$('btnImgClear').addEventListener('click', () => {
+  cfg.img = null; cfg.imgObj = null;
+  syncSettingsUI(); renderSkinPrev();
+});
+
+// —— 主界面按钮 ——
+$('btnStart').addEventListener('click', startGame);
+$('btnAgain').addEventListener('click', startGame);
+$('btnHome').addEventListener('click', goHome);
+$('btnPause').addEventListener('click', togglePause);
+$('btnResume').addEventListener('click', togglePause);
+
+// 点击暂停遮罩空白处继续
+els.ovPause.addEventListener('click', e => { if (e.target === els.ovPause) togglePause(); });
+
+// ================= 启动 =================
+// 加载视频素材（可选，无 manifest 时静默跳过）
+loadVideoAssets();
+// 图片 dataURL 恢复
+if (cfg.img) {
+  const img = new Image();
+  img.onload = () => { cfg.imgObj = img; };
+  img.src = cfg.img;
+}
+els.startBest.textContent = '🏆 历史最高分：' + cfg.best;
+updateHUD();
+
+// —— 调试钩子（自动化测试用）——
+window.__G = {
+  get S() { return S; },
+  get cfg() { return cfg; },
+  get blocks() { return S.blocks; },
+  startGame, hitBlock, handleTap, spawnBlock,
+  openSettings, syncSettingsUI, renderSkinPrev,
+  togglePause, goHome,
+  loadCfg, saveCfg,
+  setVolume,
+  get videoAssets() { return videoAssets; },
+  get videoActive() { return videoActive(); },
+  playFrameSound, frameSoundUrl,
+  seekVideoFrame, syncBgVideo
+};
+</script>
+</body>
+</html>
