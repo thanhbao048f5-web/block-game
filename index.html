@@ -321,10 +321,10 @@ function loadVideoAssets() {
     const v = els.bgVideo;
     v.src = m.bg;
     v.load();
-    // 元数据加载后：把背景画面定位到视频中间（有人物画面的帧），避免停在开头黑场
+    // 元数据加载后：把背景画面定位到视频开头附近（与第一块方块画面一致，不跳）
     v.addEventListener('loadedmetadata', () => {
       if (v.duration > 0) {
-        v.currentTime = Math.min(15, v.duration * 0.5);
+        v.currentTime = Math.min(0.5, v.duration - 0.1);
       }
     });
   }
@@ -358,7 +358,7 @@ function playClipAt(t) {
   } catch (e) {}
   clearTimeout(clipTimer);
   clipTimer = setTimeout(() => {
-    // 12 帧播完：暂停停留（画面保留在最后一帧）
+    // 16 帧播完：暂停停留（画面保留在最后一帧）
     v.pause(); v.muted = true;
     clipBusy = false;
     // 播放队列里下一个（如果有点击排队）
@@ -366,7 +366,7 @@ function playClipAt(t) {
       const next = clipQueue.shift();
       playClipAt(next);
     }
-  }, 400);   // 12帧 ≈ 0.4s（30fps）
+  }, 530);   // 16帧 ≈ 0.53s（30fps）
 }
 function seekVideoFrame(frameIdx) {
   // 背景视频加载中或失败 → 降级用切片声音
@@ -390,10 +390,10 @@ function seekVideoFrame(frameIdx) {
 function syncBgVideo(play) {
   const v = els.bgVideo;
   if (!v) return;
-  // 背景 = 视频静止画面（停在中间一个画面当封面），不点击不动
+  // 背景 = 视频开头附近的静止画面（与第一块方块画面接近，不跳）
   v.muted = true;
   if (!(v.duration > 0) && v.src) { /* 元数据未就绪，等下一轮 */ }
-  if (v.currentTime === 0 && v.duration > 0) v.currentTime = Math.min(13, v.duration * 0.5);
+  if (v.currentTime === 0 && v.duration > 0) v.currentTime = Math.min(0.5, v.duration - 0.1);
   v.pause();
 }
 
@@ -994,9 +994,9 @@ function startGame() {
   S.life = 3; S.maxLife = 3;
   S.spawnTimer = 0.6;
   S.shake = 0; S.flash = 0;
-  // 视频模式：每局从随机时间点开始，更有新鲜感
-  S.frameCounter = videoActive() ? Math.floor(Math.random() * (cfg.videoSteps || 20)) : 0;
-  syncBgVideo(true);   // 背景视频播放
+  // 视频模式：每局从视频开头开始（方块按 0,1,2… 顺序 = 视频正序，画面不跳）
+  S.frameCounter = 0;
+  syncBgVideo(true);   // 背景停在视频开头画面
   S.screen = 'playing';
   els.ovStart.classList.add('hidden');
   els.ovEnd.classList.add('hidden');
