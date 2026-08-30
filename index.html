@@ -391,6 +391,7 @@ function loadVideoAssets() {
   // 背景视频（画面 + 原声）
   if (m.bg && els.bgVideo) {
     const v = els.bgVideo;
+    v._loadStart = Date.now();
     v.src = m.bg;
     v.load();
     __diag.add('assets', 'bg video loading: ' + m.bg);
@@ -404,6 +405,23 @@ function loadVideoAssets() {
         v.currentTime = Math.min(0.5, v.duration - 0.1);
       }
     });
+    // 关键：手机浏览器默认不预加载视频（省流量），静止视频永远不会 ready。
+    // 这里用静音播放触发加载，加载出画面后立即暂停（背景=视频静止画面）
+    const kick = () => {
+      if (v.readyState >= 2 && v.videoWidth > 0) {
+        v.pause();
+        return;
+      }
+      v.muted = true;
+      const p = v.play();
+      if (p && p.then) {
+        p.then(() => { setTimeout(() => { v.pause(); }, 60); }).catch(() => {});
+      }
+    };
+    if (v.readyState >= 2) kick();
+    else v.addEventListener('loadeddata', kick, { once: true });
+    // 兜底：5 秒后还没就绪再尝试一次
+    setTimeout(() => { if (v.readyState < 2) kick(); }, 5000);
   }
 }
 function frameSoundUrl(frameIdx) {
@@ -1416,10 +1434,13 @@ function fallbackCopy(txt) {
 }
 els.diagClose.addEventListener('click', () => els.diagOverlay.classList.add('hidden'));
 
-// —— 素材加载提示：视频模式且视频未就绪时提示等待 ——
+// —— 素材加载提示：只有视频完全没数据且等了一段时间才提示 ——
 function updateLoadTip() {
   const v = els.bgVideo;
-  if (videoActive() && (!v || v.readyState < 2 || !(v.duration > 0))) {
+  if (!videoActive() || !v) { els.loadTip.classList.add('hidden'); return; }
+  const st = v.readyState;
+  // readyState 0 = 完全没加载；有元数据(≥1)就不提示
+  if (st === 0 && Date.now() - (v._loadStart || 0) > 5000) {
     els.loadTip.classList.remove('hidden');
   } else {
     els.loadTip.classList.add('hidden');
