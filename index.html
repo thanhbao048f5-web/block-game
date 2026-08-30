@@ -208,7 +208,7 @@
       <div class="s-group">
         <h3>🎬 视频方块模式（素材版）</h3>
         <div class="s-row"><label>开启：背景播放视频，方块=视频画面，点击=原声融合</label><input type="checkbox" id="videoChk"></div>
-        <div class="s-row" id="rowSteps"><label>点几下连成一首歌</label><input type="range" id="stepsRange" min="10" max="40" value="20"><span id="stepsVal" style="min-width:24px;text-align:right">20</span></div>
+        <div class="s-row" id="rowSteps"><label>点几下连成一首歌（段越密画面越连续）</label><input type="range" id="stepsRange" min="20" max="80" value="50"><span id="stepsVal" style="min-width:24px;text-align:right">50</span></div>
         <div class="hint" id="videoInfo"></div>
         <div class="hint warn">开启后：背景播放原视频（含原声），方块按歌曲段落顺序出现；点满「点几下连成歌」的次数，就能听完整首歌！</div>
       </div>
@@ -264,7 +264,7 @@ const DEFAULTS = {
   img: null,              // dataURL
   cols: 4,
   speed: 5,
-  videoSteps: 20,       // 点击几下连成一首歌（视频模式下）
+  videoSteps: 50,       // 50 段 × 0.53s(16帧) ≈ 全曲：点 50 下连成一首歌，画面无缝不跳
   strict: false,
   videoMode: true,      // 视频方块模式（素材版），默认开启（无素材时自动失效）
   best: 0
@@ -281,6 +281,8 @@ function loadCfg() {
     if (window.VIDEO_MANIFEST && merged.videoMode === false && !o.__videoOff) {
       merged.videoMode = true;
     }
+    // 旧版本 20 段（1.35s/段，播放会跳画面）自动升级为 50 段（16帧无缝衔接）
+    if (merged.videoSteps === 20 && !o.__stepsV2) merged.videoSteps = 50;
     return merged;
   } catch (e) { return { ...DEFAULTS }; }
 }
@@ -1191,7 +1193,7 @@ function syncSettingsUI() {
   $('strictChk').checked = cfg.strict;
   // 视频模式
   els.videoChk.checked = cfg.videoMode;
-  $('stepsRange').value = cfg.videoSteps || 20; els.stepsVal.textContent = cfg.videoSteps || 20;
+  $('stepsRange').value = cfg.videoSteps || 50; els.stepsVal.textContent = cfg.videoSteps || 50;
   if (videoAssets && videoAssets.m) {
     const m = videoAssets.m;
     els.videoInfo.textContent = '✅ 已找到素材：「' + m.title + '」 ' + m.count + ' 个片段（每 0.2s）· ' + m.frameExt + ' 帧 + ' + m.soundExt + ' 声音';
