@@ -68,7 +68,22 @@
   .slot .fname { flex:1; font-size:12px; color:#889; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:150px; }
   .thumb { width:44px; height:44px; border-radius:8px; object-fit:cover; border:1px solid rgba(255,255,255,.2); }
   .hint { font-size:12px; color:#779; line-height:1.7; margin-top:6px; }
-  .hint.warn { color:#f88; }
+  .hint.warn { color:#ffd166; }
+  /* 诊断弹层 */
+  #diagOverlay { position:fixed; inset:0; z-index:80; background:rgba(0,0,0,.72); display:flex; align-items:center; justify-content:center; padding:16px; }
+  #diagOverlay.hidden { display:none; }
+  .diag-box { background:#161322; border:1px solid #3a3352; border-radius:14px; padding:16px; width:100%; max-width:480px; max-height:80vh; display:flex; flex-direction:column; gap:10px; }
+  .diag-box h3 { font-size:15px; color:#ffd166; }
+  #diagText { width:100%; height:46vh; min-height:200px; background:#0d0b16; color:#9fe6a0; border:1px solid #2c2544; border-radius:8px; padding:10px; font:12px/1.5 Consolas,Monaco,monospace; resize:none; white-space:pre; }
+  .diag-actions { display:flex; gap:10px; }
+  .diag-actions .btn { flex:1; }
+  .btn-ghost { background:transparent; border:1px solid #4a4370; color:#cfc9e8; }
+  .btn-ghost:hover { background:#241f3a; }
+  /* 素材加载提示 */
+  #loadTip { position:absolute; top:56px; left:0; right:0; text-align:center; font-size:12px; color:#ffd166; z-index:6; pointer-events:none; text-shadow:0 1px 4px #000; }
+  #loadTip.hidden { display:none; }
+  /* 微信提示 */
+  #wxTip { margin-top:12px; font-size:12px; color:#ff9db1; text-align:center; }
   #skinPrev { width:100%; height:150px; border-radius:12px; background:#151528; margin-bottom:10px; }
   .radios { display:flex; gap:14px; flex-wrap:wrap; font-size:13px; }
   .radios label { display:flex; align-items:center; gap:5px; color:#ccd; cursor:pointer; }
@@ -82,6 +97,7 @@
 <div id="stage">
   <video id="bgVideo" playsinline loop preload="auto"></video>
   <canvas id="cv"></canvas>
+  <div id="loadTip" class="hidden">⏳ 素材加载中…请稍候（网络慢时等几秒）</div>
 
   <!-- HUD -->
   <div id="hud">
@@ -213,8 +229,26 @@
         <div class="hint warn">开启后：背景播放原视频（含原声），方块按歌曲段落顺序出现；点满「点几下连成歌」的次数，就能听完整首歌！</div>
       </div>
 
+      <div class="s-group">
+        <h3>🔧 遇到问题？（点不动 / 没声音）</h3>
+        <div class="s-row"><button id="diagBtn" class="btn btn-ghost">📋 查看诊断记录（复制发给作者）</button></div>
+        <div class="hint">游戏会实时记录点击、声音、加载等状况。出问题时点这里复制，把内容发给作者即可定位。</div>
+      </div>
+
       <button class="s-save" id="btnSaveSet">✔ 保存设置</button>
       <div class="hint" style="margin-top:10px;text-align:center">设置会自动记住，下次打开还在</div>
+    </div>
+  </div>
+</div>
+
+<!-- 诊断记录弹层 -->
+<div id="diagOverlay" class="hidden">
+  <div class="diag-box">
+    <h3>📋 游戏诊断记录</h3>
+    <textarea id="diagText" readonly spellcheck="false"></textarea>
+    <div class="diag-actions">
+      <button id="diagCopy" class="btn">📄 复制</button>
+      <button id="diagClose" class="btn btn-ghost">关闭</button>
     </div>
   </div>
 </div>
@@ -248,7 +282,10 @@ const els = {
  skinPrev: $('skinPrev'), imgThumb: $('imgThumb'),
  videoChk: $('videoChk'), videoInfo: $('videoInfo'),
  stepsVal: $('stepsVal'),
- bgVideo: $('bgVideo')
+ bgVideo: $('bgVideo'),
+ loadTip: $('loadTip'),
+ diagOverlay: $('diagOverlay'), diagText: $('diagText'),
+ diagCopy: $('diagCopy'), diagClose: $('diagClose')
  };
 const spv = els.skinPrev.getContext('2d');
 
@@ -305,6 +342,37 @@ const S = {
   lastT: 0
 };
 
+// ===== 诊断日志系统（实时记录游戏状况，排查问题用） =====
+const __diag = {
+  log: [],
+  MAX: 300,
+  add(tag, msg) {
+    const t = new Date().toISOString().slice(11, 23);
+    __diag.log.push({ t, tag, msg: String(msg).slice(0, 200) });
+    if (__diag.log.length > __diag.MAX) __diag.log.shift();
+    try { localStorage.setItem('blockgame_diag', JSON.stringify(__diag.log.slice(-150))); } catch (e) {}
+  },
+  info() {
+    const c = navigator.connection || {};
+    return {
+      ua: navigator.userAgent.slice(0, 180),
+      net: c.effectiveType || 'unknown',
+      screen: (screen.width || 0) + 'x' + (screen.height || 0),
+      dpr: window.devicePixelRatio || 1,
+      videoReady: els.bgVideo ? els.bgVideo.readyState : -1,
+      videoDur: els.bgVideo ? +(els.bgVideo.duration || 0).toFixed(1) : 0,
+      videoErr: els.bgVideo && els.bgVideo.error ? els.bgVideo.error.code : 0,
+      frames: videoAssets ? videoAssets.frames.length : 0,
+      steps: cfg.videoSteps,
+      soundMode: cfg.soundMode,
+      volume: cfg.volume
+    };
+  },
+  export() { return JSON.stringify({ info: __diag.info(), log: __diag.log }, null, 1); }
+};
+window.onerror = function (msg, src, line) {
+  __diag.add('js_error', msg + ' @' + (src || '').split('/').pop() + ':' + line);
+};
 // ================= 视频素材（video_assets/ 可选） =================
 let videoAssets = null; // {m: manifest, frames: [Image]}
 let bgCache = null;     // 背景上一帧缓存（视频 seek 时显示，避免闪黑）
@@ -325,6 +393,11 @@ function loadVideoAssets() {
     const v = els.bgVideo;
     v.src = m.bg;
     v.load();
+    __diag.add('assets', 'bg video loading: ' + m.bg);
+    v.addEventListener('error', () => {
+      __diag.add('video_error', 'bgVideo error code=' + (v.error ? v.error.code : '?') + ' net=' + (navigator.connection ? navigator.connection.effectiveType : '?'));
+    });
+    v.addEventListener('canplay', () => { __diag.add('video_canplay', 'ready=' + v.readyState); });
     // 元数据加载后：把背景画面定位到视频开头附近（与第一块方块画面一致，不跳）
     v.addEventListener('loadedmetadata', () => {
       if (v.duration > 0) {
@@ -340,10 +413,17 @@ function frameSoundUrl(frameIdx) {
 }
 function playFrameSound(frameIdx) {
   try {
-    const a = new Audio(frameSoundUrl(frameIdx));
+    const url = frameSoundUrl(frameIdx);
+    if (!url) return false;
+    const a = new Audio(url);
     a.volume = Math.max(0.05, cfg.volume / 100) * 0.9;
-    a.play().catch(() => {});
-  } catch (e) {}
+    const p = a.play();
+    if (p && p.catch) p.catch(() => { __diag.add('wav_fail', 'idx=' + frameIdx); });
+    return true;
+  } catch (e) {
+    __diag.add('wav_exc', String(e).slice(0, 100));
+    return false;
+  }
 }
 // —— 点击片段播放：队列播放器 ——
 // 点击方块 → 从对应位置播放 12 帧动画（画面+音乐同步），播完停留；
@@ -354,12 +434,16 @@ let clipTimer = null;  // 12帧播完计时器
 function playClipAt(t) {
   const v = els.bgVideo;
   clipBusy = true;
+  __diag.add('play', 'seek t=' + t.toFixed(2) + ' ready=' + v.readyState + ' paused=' + v.paused);
   try {
     v.currentTime = t;
     v.muted = false;
     v.volume = Math.max(0.05, cfg.volume / 100) * 0.9;
-    v.play().catch(() => {});
-  } catch (e) {}
+    const p = v.play();
+    if (p && p.catch) p.catch(err => { __diag.add('play_fail', String(err).slice(0, 120)); });
+  } catch (e) {
+    __diag.add('play_exc', String(e).slice(0, 120));
+  }
   clearTimeout(clipTimer);
   clipTimer = setTimeout(() => {
     // 14 帧播完：暂停停留（画面保留在最后一帧）
@@ -375,20 +459,25 @@ function playClipAt(t) {
 function seekVideoFrame(frameIdx) {
   // 背景视频加载中或失败 → 降级用切片声音
   const base = els.bgVideo;
-  if (!base || !(base.duration > 0)) return false;
+  if (!base || !(base.duration > 0)) {
+    __diag.add('tap_silent', 'video not ready: dur=' + (base ? base.duration : 'null') + ' ready=' + (base ? base.readyState : '-'));
+    return false;
+  }
   try {
     // 歌时间点：整首歌按 videoSteps 等分
-    const step = base.duration / (cfg.videoSteps || 20);
+    const step = base.duration / (cfg.videoSteps || 50);
     const t = frameIdx * step + 0.02;
-    if (t >= base.duration) return false;
+    if (t >= base.duration) { __diag.add('tap_silent', 't out of range: ' + t.toFixed(2)); return false; }
     if (clipBusy) {
-      // 正在播放 12 帧：排队等待，播完上一个再播这个
+      // 正在播放片段：排队等待，播完上一个再播这个
       if (clipQueue.length < 30) clipQueue.push(t);
       return true;
     }
     playClipAt(t);
     return true;
-  } catch (e) {}
+  } catch (e) {
+    __diag.add('seek_exc', String(e).slice(0, 120));
+  }
   return false;
 }
 function syncBgVideo(play) {
@@ -638,9 +727,15 @@ function hitBlock(b) {
   b.state = 'hit'; b.hitT = 0;
   S.score++; S.combo++; S.maxCombo = Math.max(S.maxCombo, S.combo);
   if (videoActive() && b.frameIdx !== undefined) {
-    // 声音融合：让背景视频跳到该帧时刻播放原声；视频未就绪时降级为切片声音
+    // 声音融合：点击 → 视频播 14 帧；视频未就绪时降级切片声音，再不行用合成音
     const seeked = seekVideoFrame(b.frameIdx);
-    if (!seeked) playFrameSound(b.frameIdx);
+    if (seeked) {
+      __diag.add('hit_ok', 'idx=' + b.frameIdx + ' seek');
+    } else {
+      const snd = playFrameSound(b.frameIdx);
+      __diag.add('hit_fallback', 'idx=' + b.frameIdx + ' wav=' + snd);
+      if (!snd) playHitSound(b.col, S.combo);   // 最后兜底：合成音
+    }
   } else {
     playHitSound(b.col, S.combo);
   }
@@ -976,9 +1071,11 @@ function handleTap(x, y) {
       }
     }
     if (hit) {
+      __diag.add('tap_hit', 'x=' + Math.round(x) + ' y=' + Math.round(y) + ' idx=' + hit.frameIdx);
       hitBlock(hit);
     } else {
       // 点空：显示扩散波纹提示（有反馈，不会感觉"没反应"）
+      __diag.add('tap_miss', 'x=' + Math.round(x) + ' y=' + Math.round(y));
       S.ripples.push({ x, y, r: 8, max: 26, life: 0.32, maxLife: 0.32 });
       S.combo = 0; S.flash = 0.2;
       playMissSound();
@@ -990,6 +1087,7 @@ function handleTap(x, y) {
 
 cv.addEventListener('pointerdown', e => {
   ensureAudio();
+  if (window.__evtFirst !== 'touch') __diag.add('evt', 'pointerdown');
   const p = canvasPos(e);
   handleTap(p.x, p.y);
 });
@@ -998,6 +1096,7 @@ if (!window.PointerEvent) {
   cv.addEventListener('touchstart', e => {
     e.preventDefault();
     ensureAudio();
+    __diag.add('evt', 'touchstart(fallback)');
     const p = canvasPos(e);
     handleTap(p.x, p.y);
   }, { passive: false });
@@ -1297,6 +1396,46 @@ $('stepsRange').addEventListener('input', e => {
   cfg.videoSteps = Number(e.target.value); els.stepsVal.textContent = cfg.videoSteps;
 });
 
+// —— 诊断面板 ——
+$('diagBtn').addEventListener('click', () => {
+  els.diagText.value = __diag.export();
+  els.diagOverlay.classList.remove('hidden');
+});
+els.diagCopy.addEventListener('click', () => {
+  const txt = els.diagText.value;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(txt).then(() => {
+      els.diagCopy.textContent = '✅ 已复制';
+      setTimeout(() => { els.diagCopy.textContent = '📄 复制'; }, 1500);
+    }).catch(() => { fallbackCopy(txt); });
+  } else fallbackCopy(txt);
+});
+function fallbackCopy(txt) {
+  els.diagText.select();
+  try { document.execCommand('copy'); els.diagCopy.textContent = '✅ 已复制'; setTimeout(() => { els.diagCopy.textContent = '📄 复制'; }, 1500); } catch (e) {}
+}
+els.diagClose.addEventListener('click', () => els.diagOverlay.classList.add('hidden'));
+
+// —— 素材加载提示：视频模式且视频未就绪时提示等待 ——
+function updateLoadTip() {
+  const v = els.bgVideo;
+  if (videoActive() && (!v || v.readyState < 2 || !(v.duration > 0))) {
+    els.loadTip.classList.remove('hidden');
+  } else {
+    els.loadTip.classList.add('hidden');
+  }
+}
+setInterval(updateLoadTip, 1000);
+
+// —— 微信内置浏览器提示（微信对视频声音限制多） ——
+if (/MicroMessenger/i.test(navigator.userAgent)) {
+  const wxTip = document.createElement('div');
+  wxTip.id = 'wxTip';
+  wxTip.textContent = '⚠️ 微信内打开声音可能不正常，建议点右上角「…」→ 用手机浏览器打开';
+  document.getElementById('ovStart').appendChild(wxTip);
+  __diag.add('env', 'wechat in-app browser detected');
+}
+
 $('btnImg').addEventListener('click', () => $('imgFile').click());
 $('imgFile').addEventListener('change', e => {
   const f = e.target.files[0];
@@ -1352,7 +1491,8 @@ window.__G = {
   playFrameSound, frameSoundUrl,
   seekVideoFrame, syncBgVideo,
   get clipQueue() { return clipQueue; },
-  get clipBusy() { return clipBusy; }
+  get clipBusy() { return clipBusy; },
+  get diag() { return __diag; }
 };
 </script>
 </body>
