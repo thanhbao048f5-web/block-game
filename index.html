@@ -306,6 +306,7 @@ const S = {
 
 // ================= 视频素材（video_assets/ 可选） =================
 let videoAssets = null; // {m: manifest, frames: [Image]}
+let bgCache = null;     // 背景上一帧缓存（视频 seek 时显示，避免闪黑）
 function videoActive() { return cfg.videoMode && videoAssets && videoAssets.frames.length > 0; }
 function loadVideoAssets() {
   if (!window.VIDEO_MANIFEST) return;
@@ -842,14 +843,25 @@ function render() {
   const v = els.bgVideo;
   const vReady = v && v.readyState >= 2 && v.videoWidth > 0;
   let bgDrawn = false;
-  if (videoActive() && vReady) {
-    const vw = v.videoWidth, vh = v.videoHeight;
-    const s = Math.max(W / vw, H / vh);
-    const dw = vw * s, dh = vh * s;
-    try {
-      ctx.drawImage(v, (W - dw) / 2, (H - dh) / 2, dw, dh);
-      bgDrawn = true;
-    } catch (e) {}
+  if (videoActive()) {
+    const vReady2 = vReady && !v.seeking;
+    if (vReady2) {
+      const vw = v.videoWidth, vh = v.videoHeight;
+      const s = Math.max(W / vw, H / vh);
+      const dw = vw * s, dh = vh * s;
+      const dx = (W - dw) / 2, dy = (H - dh) / 2;
+      try {
+        ctx.drawImage(v, dx, dy, dw, dh);
+        // 同步缓存上一帧（seek 时用来避免闪黑）
+        if (!bgCache) bgCache = document.createElement('canvas');
+        if (bgCache.width !== W || bgCache.height !== H) { bgCache.width = W; bgCache.height = H; }
+        bgCache.getContext('2d').drawImage(v, dx, dy, dw, dh);
+        bgDrawn = true;
+      } catch (e) {}
+    } else if (bgCache) {
+      // 视频正在 seek（画面暂不可用）：显示缓存帧，不闪黑
+      try { ctx.drawImage(bgCache, 0, 0, W, H); bgDrawn = true; } catch (e) {}
+    }
   }
   if (!bgDrawn) {
     const bg = ctx.createLinearGradient(0, 0, 0, H);
