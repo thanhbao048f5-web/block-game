@@ -443,7 +443,31 @@ function playFrameSound(frameIdx) {
     return false;
   }
 }
-// 播放该方块位置的原声切片（3 段 0.2s 连续 ≈ 14 帧时长），独立音频，即时响应、互不打断
+// —— 原声切片播放：Web Audio 排程（解码缓存、连续无间隙、不受系统静音键/手势限制）——
+const clipSoundCache = new Map();   // url -> AudioBuffer
+const clipFetching = new Map();     // url -> Promise
+function getClipBuffer(url) {
+  if (clipSoundCache.has(url)) return Promise.resolve(clipSoundCache.get(url));
+  if (clipFetching.has(url)) return clipFetching.get(url);
+  const p = fetch(url).then(r => { if (!r.ok) throw new Error('http ' + r.status); return r.arrayBuffer(); })
+    .then(buf => actx.decodeAudioData(buf))
+    .then(b => { clipSoundCache.set(url, b); clipFetching.delete(url); return b; })
+    .catch(err => {
+      clipFetching.delete(url);
+      __diag.add('clip_decode_fail', url.split('/').pop() + ' ' + err);
+      // 兜底：fetch/decode 失败时用 Audio 元素直接播
+      try {
+        const a = new Audio(url);
+        a.volume = Math.max(0.05, cfg.volume / 100) * 0.9;
+        const p = a.play();
+        if (p && p.catch) p.catch(() => {});
+      } catch (e) {}
+      return null;
+    });
+  clipFetching.set(url, p);
+  return p;
+}
+// 播放该方块位置的原声（3 段 0.2s 连续 ≈ 14 帧时长），即时响应、互不打断
 function playClipSound(frameIdx) {
   const m = videoAssets && videoAssets.m;
   if (!m || !m.soundDir) return false;
@@ -451,22 +475,40 @@ function playClipSound(frameIdx) {
     const dur = (els.bgVideo && els.bgVideo.duration) || 26.9;
     const step = dur / (cfg.videoSteps || 50);
     const baseIdx = Math.max(0, Math.round(frameIdx * step * 5));   // 视频时间 → 0.2s 切片索引
+    const urls = [];
     for (let i = 0; i < 3; i++) {
       const idx = baseIdx + i;
       if (idx >= m.count) break;
-      const url = m.soundDir + String(idx + 1).padStart(m.soundPad || 4, '0') + '.' + m.soundExt;
-      (function (ii) {
+      urls.push(m.soundDir + String(idx + 1).padStart(m.soundPad || 4, '0') + '.' + m.soundExt);
+    }
+    if (location.protocol === 'file:') {
+      // 本地 file:// 无法 fetch：用 Audio 元素依次播放
+      urls.forEach((url, i) => {
         setTimeout(() => {
           try {
             const a = new Audio(url);
             a.volume = Math.max(0.05, cfg.volume / 100) * 0.9;
             const p = a.play();
-            if (p && p.catch) p.catch(() => __diag.add('clip_wav_fail', 'idx=' + idx));
+            if (p && p.catch) p.catch(() => {});
           } catch (e) {}
-        }, ii * 200);
-      })(i);
+        }, i * 200);
+      });
+      return true;
     }
-    __diag.add('clip_sound', 'idx=' + frameIdx + ' seg=' + baseIdx);
+    if (!ensureAudio()) return false;
+    const startAt = actx.currentTime + 0.03;
+    Promise.all(urls.map(u => getClipBuffer(u))).then(buffers => {
+      buffers.forEach((buf, i) => {
+        if (!buf) return;
+        const src = actx.createBufferSource();
+        src.buffer = buf;
+        const g = actx.createGain();
+        g.gain.value = Math.max(0.05, cfg.volume / 100) * 0.9;
+        src.connect(g); g.connect(master);
+        src.start(startAt + i * 0.2);
+      });
+    });
+    __diag.add('clip_sound', 'idx=' + frameIdx + ' seg=' + baseIdx + ' actx=' + actx.state);
     return true;
   } catch (e) {
     __diag.add('clip_sound_exc', String(e).slice(0, 100));
@@ -486,7 +528,8 @@ function playClipAt(t) {
   try {
     v.currentTime = t;
     v.muted = true;    // 画面静音播放：声音由独立音频负责（手机端更可靠、不受视频播放卡顿影响）
-    v.play().catch(() => {});
+    const pp = v.play();
+    if (pp && pp.catch) pp.catch(err => __diag.add('video_play_fail', String(err).slice(0, 100)));
   } catch (e) {
     __diag.add('play_exc', String(e).slice(0, 120));
   }
@@ -1129,22 +1172,19 @@ function handleTap(x, y) {
   }
 }
 
-cv.addEventListener('pointerdown', e => {
+// 点击处理：touchstart 为主力（微信/鸿蒙等 WebView 的 pointer 事件不可靠），pointerdown 兜底
+let lastTapEvt = 0;
+function onTap(e) {
   ensureAudio();
-  if (window.__evtFirst !== 'touch') __diag.add('evt', 'pointerdown');
+  const now = performance.now();
+  if (now - lastTapEvt < 80) return;   // 同一触摸的 pointer+touch 双事件去重（快速连点不受影响）
+  lastTapEvt = now;
+  __diag.add('evt', e.type);
   const p = canvasPos(e);
   handleTap(p.x, p.y);
-});
-// 兼容不支持 pointer 事件的老手机浏览器（部分安卓 WebView）
-if (!window.PointerEvent) {
-  cv.addEventListener('touchstart', e => {
-    e.preventDefault();
-    ensureAudio();
-    __diag.add('evt', 'touchstart(fallback)');
-    const p = canvasPos(e);
-    handleTap(p.x, p.y);
-  }, { passive: false });
 }
+cv.addEventListener('touchstart', e => { e.preventDefault(); onTap(e); }, { passive: false });
+cv.addEventListener('pointerdown', e => { onTap(e); });
 
 window.addEventListener('keydown', e => {
   ensureAudio();
@@ -1536,7 +1576,7 @@ window.__G = {
   get videoAssets() { return videoAssets; },
   get videoActive() { return videoActive(); },
   playFrameSound, frameSoundUrl,
-  seekVideoFrame, syncBgVideo,
+  seekVideoFrame, syncBgVideo, playClipSound,
   get clipQueue() { return clipQueue; },
   get clipBusy() { return clipBusy; },
   get diag() { return __diag; }
