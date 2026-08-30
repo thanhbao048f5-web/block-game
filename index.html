@@ -8,7 +8,7 @@
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html,body { height:100%; overflow:hidden; font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif; background:#0d0d17; color:#fff; user-select:none; }
   #stage { position:relative; width:100%; height:100%; }
-  #bgVideo { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; z-index:0; opacity:.75; background:#000; }
+  #bgVideo { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; z-index:0; opacity:.95; background:#000; }
   .playVideo { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; z-index:0; pointer-events:none; }
   #cv { display:block; position:absolute; inset:0; width:100%; height:100%; touch-action:none; z-index:1; }
 
@@ -276,7 +276,13 @@ function loadCfg() {
     const raw = localStorage.getItem('blockgame_cfg');
     if (!raw) return { ...DEFAULTS };
     const o = JSON.parse(raw);
-    return { ...DEFAULTS, ...o };
+    const merged = { ...DEFAULTS, ...o };
+    // 兼容修复：历史版本可能残留 videoMode=false（旧默认值），有素材时自动开启；
+    // 只有用户明确关闭（__videoOff 标记）才尊重关闭
+    if (window.VIDEO_MANIFEST && merged.videoMode === false && !o.__videoOff) {
+      merged.videoMode = true;
+    }
+    return merged;
   } catch (e) { return { ...DEFAULTS }; }
 }
 function saveCfg() {
@@ -313,8 +319,15 @@ function loadVideoAssets() {
   }
   // 背景视频（画面 + 原声）
   if (m.bg && els.bgVideo) {
-    els.bgVideo.src = m.bg;
-    els.bgVideo.load();
+    const v = els.bgVideo;
+    v.src = m.bg;
+    v.load();
+    // 元数据加载后：把背景画面定位到视频中间（有人物画面的帧），避免停在开头黑场
+    v.addEventListener('loadedmetadata', () => {
+      if (v.duration > 0) {
+        v.currentTime = Math.min(15, v.duration * 0.5);
+      }
+    });
   }
 }
 function frameSoundUrl(frameIdx) {
@@ -820,9 +833,18 @@ function shadeColor(color, amt) {
 }
 
 function render() {
-  // 背景：视频模式下用半透明深色遮罩（底下是背景视频），否则用渐变
-  if (videoActive() && els.bgVideo) {
-    ctx.fillStyle = 'rgba(8,8,18,0.5)';
+  // 背景：视频模式直接用 canvas 绘制视频当前帧（保证一定能显示），否则用渐变
+  const v = els.bgVideo;
+  const vReady = v && v.readyState >= 2 && v.videoWidth > 0;
+  if (videoActive() && vReady) {
+    // cover 铺满
+    const vw = v.videoWidth, vh = v.videoHeight;
+    const s = Math.max(W / vw, H / vh);
+    const dw = vw * s, dh = vh * s;
+    try {
+      ctx.drawImage(v, (W - dw) / 2, (H - dh) / 2, dw, dh);
+    } catch (e) {}
+    ctx.fillStyle = 'rgba(8,8,18,0.22)';   // 很薄的遮罩，保证方块清晰
     ctx.fillRect(0, 0, W, H);
   } else {
     const bg = ctx.createLinearGradient(0, 0, 0, H);
@@ -1215,6 +1237,7 @@ $('speedRange').addEventListener('input', e => { cfg.speed = Number(e.target.val
 $('strictChk').addEventListener('change', e => { cfg.strict = e.target.checked; });
 $('videoChk').addEventListener('change', e => {
   cfg.videoMode = e.target.checked;
+  if (e.target.checked) delete cfg.__videoOff; else cfg.__videoOff = true;   // 记录用户明确关闭
   syncBgVideo(cfg.videoMode);
 });
 $('stepsRange').addEventListener('input', e => {
