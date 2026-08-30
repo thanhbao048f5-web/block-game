@@ -9,6 +9,7 @@
   html,body { height:100%; overflow:hidden; font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif; background:#0d0d17; color:#fff; user-select:none; }
   #stage { position:relative; width:100%; height:100%; }
   #bgVideo { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; z-index:0; opacity:.75; background:#000; }
+  .playVideo { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; z-index:0; pointer-events:none; }
   #cv { display:block; position:absolute; inset:0; width:100%; height:100%; touch-action:none; z-index:1; }
 
   /* ===== 顶部 HUD ===== */
@@ -328,33 +329,57 @@ function playFrameSound(frameIdx) {
     a.play().catch(() => {});
   } catch (e) {}
 }
-// —— 背景视频：静止显示画面；点击方块 → 从对应位置播放 0.1 秒（画面+音乐同步）——
-let muteTimer = null;   // 停止点击后自动暂停计时器
+// —— 视频播放池：点击方块 → 独立播放 0.1s 视频片段（音频同步），互不打断 ——
+let videoPool = [];    // 临时播放用 video 元素池
+let poolIdx = 0;
+function ensurePool() {
+  if (videoPool.length > 0) return;
+  const N = 6;   // 池大小：0.1s 内最多并发 6 个点击
+  const m = videoAssets.m;
+  for (let i = 0; i < N; i++) {
+    const v = document.createElement('video');
+    v.className = 'playVideo';
+    v.playsInline = true;
+    v.preload = 'auto';
+    v.muted = true;
+    v.style.display = 'none';
+    if (m.bg) v.src = m.bg;
+    stage.appendChild(v);
+    v.load();
+    videoPool.push(v);
+  }
+}
 function seekVideoFrame(frameIdx) {
-  const v = els.bgVideo;
-  if (!v || !v.duration || !(v.duration > 0)) return false;
+  // 背景视频加载中或失败 → 降级用切片声音
+  const base = els.bgVideo;
+  if (!base || !(base.duration > 0)) return false;
   try {
-    // 歌时间点：整首歌按 videoSteps 等分，点第 i 块 → 从第 i 段播放 0.1 秒
-    const step = v.duration / (cfg.videoSteps || 20);
+    ensurePool();
+    const v = videoPool[poolIdx % videoPool.length];
+    poolIdx++;
+    // 歌时间点：整首歌按 videoSteps 等分
+    const step = base.duration / (cfg.videoSteps || 20);
     const t = frameIdx * step + 0.02;
-    if (t < v.duration) {
-      v.currentTime = t;
-      v.muted = false;                       // 点击 → 播放 0.1s 原声（画面同步动 0.1s）
-      v.volume = Math.max(0.05, cfg.volume / 100) * 0.9;
-      v.play().catch(() => {});
-      clearTimeout(muteTimer);
-      // 0.1s 后停回静止；快速连点会不断续上
-      muteTimer = setTimeout(() => { v.pause(); v.muted = true; }, 100);
-      return true;
-    }
+    if (t >= base.duration) return false;
+    v.currentTime = t;
+    v.muted = false;                        // 这个片段出声
+    v.volume = Math.max(0.05, cfg.volume / 100) * 0.9;
+    v.style.display = 'block';
+    v.play().catch(() => {});
+    // 0.1s 后这个片段结束：暂停、静音、隐藏（不影响其他片段播放）
+    const that = v;
+    setTimeout(() => { that.pause(); that.muted = true; that.style.display = 'none'; }, 100);
+    return true;
   } catch (e) {}
   return false;
 }
 function syncBgVideo(play) {
   const v = els.bgVideo;
   if (!v) return;
-  // 背景默认静止：不点击就不动（muted 静音，停在当前帧画面）
+  // 背景 = 视频静止画面（停在中间一个画面当封面），不点击不动
   v.muted = true;
+  if (!(v.duration > 0) && v.src) { /* 元数据未就绪，等下一轮 */ }
+  if (v.currentTime === 0 && v.duration > 0) v.currentTime = Math.min(13, v.duration * 0.5);
   v.pause();
 }
 
@@ -583,7 +608,7 @@ function spawnBlockAt(col, demo) {
   S.blocks.push(b);
 }
 
-function speedBase() { return 200 + cfg.speed * 40; }
+function speedBase() { return 130 + cfg.speed * 20; }   // 速度调慢：speed=5 → 230px/s
 function currentSpeed() { return speedBase() * (1 + Math.min(S.score * 0.015, 1.3)); }
 function rowH() { return blockSize() + 10; }   // 行距 = 方块高 + 间隙
 function currentInterval() {
