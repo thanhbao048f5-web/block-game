@@ -375,13 +375,12 @@ function seekVideoFrame(frameIdx) {
     const t = frameIdx * step + 0.02;
     if (t >= base.duration) return false;
     v.currentTime = t;
-    v.muted = false;                        // 这个片段出声
+    v.muted = false;                        // 这个片段出声（画面由 canvas 叠加绘制）
     v.volume = Math.max(0.05, cfg.volume / 100) * 0.9;
-    v.style.display = 'block';
     v.play().catch(() => {});
-    // 0.1s 后这个片段结束：暂停、静音、隐藏（不影响其他片段播放）
+    // 0.1s 后这个片段结束：暂停、静音（画面自然从 canvas 消失，不影响其他片段）
     const that = v;
-    setTimeout(() => { that.pause(); that.muted = true; that.style.display = 'none'; }, 100);
+    setTimeout(() => { that.pause(); that.muted = true; }, 100);
     return true;
   } catch (e) {}
   return false;
@@ -833,7 +832,7 @@ function shadeColor(color, amt) {
 }
 
 function render() {
-  // 背景：视频模式直接用 canvas 绘制视频当前帧（保证一定能显示），否则用渐变
+  // 背景：视频模式直接用 canvas 绘制视频帧（保证一定能显示），否则用渐变
   const v = els.bgVideo;
   const vReady = v && v.readyState >= 2 && v.videoWidth > 0;
   if (videoActive() && vReady) {
@@ -844,14 +843,28 @@ function render() {
     try {
       ctx.drawImage(v, (W - dw) / 2, (H - dh) / 2, dw, dh);
     } catch (e) {}
-    ctx.fillStyle = 'rgba(8,8,18,0.22)';   // 很薄的遮罩，保证方块清晰
-    ctx.fillRect(0, 0, W, H);
   } else {
     const bg = ctx.createLinearGradient(0, 0, 0, H);
     bg.addColorStop(0, '#0d0d17');
     bg.addColorStop(0.6, '#131025');
     bg.addColorStop(1, '#1a0f2e');
     ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+  }
+  // 叠加播放中的 0.1s 片段（点击触发的视频）：画面盖在背景上，0.1s 后自动消失
+  if (videoPool.length > 0) {
+    for (const pv of videoPool) {
+      if (!pv.paused && pv.readyState >= 2 && pv.videoWidth > 0) {
+        try {
+          const pvs = Math.max(W / pv.videoWidth, H / pv.videoHeight);
+          ctx.drawImage(pv, (W - pv.videoWidth * pvs) / 2, (H - pv.videoHeight * pvs) / 2, pv.videoWidth * pvs, pv.videoHeight * pvs);
+        } catch (e) {}
+      }
+    }
+  }
+  // 薄遮罩保证方块清晰
+  if (videoActive() && vReady) {
+    ctx.fillStyle = 'rgba(8,8,18,0.22)';
     ctx.fillRect(0, 0, W, H);
   }
 
