@@ -756,9 +756,11 @@ function drawBlock(b) {
   ctx.globalAlpha = alpha;
 
   const shape = cfg.shape;
-  // 视频模式：方块 = 视频帧画面
-  if (b.frameIdx !== undefined && videoAssets && videoAssets.frames[b.frameIdx]) {
-    const img = videoAssets.frames[b.frameIdx];
+  // 视频模式：方块 = 该方块对应视频时刻的画面（与点击播放位置一致）
+  if (b.frameIdx !== undefined && videoAssets && videoAssets.frames.length) {
+    // frameIdx → 视频时间 → 切片帧图索引（与 seekVideoFrame 的 step 一致）
+    const fi = Math.min(videoAssets.frames.length - 1, Math.round(b.frameIdx * (videoAssets.m.count / (cfg.videoSteps || 20))));
+    const img = videoAssets.frames[fi];
     ctx.save();
     drawShape(x, y, size, shape);
     ctx.clip();
