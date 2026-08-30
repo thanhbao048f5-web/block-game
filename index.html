@@ -342,12 +342,13 @@ function playFrameSound(frameIdx) {
     a.play().catch(() => {});
   } catch (e) {}
 }
-// —— 视频播放池：点击方块 → 独立播放 0.1s 视频片段（音频同步），互不打断 ——
+// —— 视频播放池：点击方块 → 独立播放 12 帧动画（音频同步），播完停留，互不打断 ——
 let videoPool = [];    // 临时播放用 video 元素池
 let poolIdx = 0;
+let currentClip = null;  // 当前背景画面来源（最新点击的片段，播放中或已停住）
 function ensurePool() {
   if (videoPool.length > 0) return;
-  const N = 6;   // 池大小：0.1s 内最多并发 6 个点击
+  const N = 6;   // 池大小：同时最多并发 6 个点击
   const m = videoAssets.m;
   for (let i = 0; i < N; i++) {
     const v = document.createElement('video');
@@ -355,7 +356,6 @@ function ensurePool() {
     v.playsInline = true;
     v.preload = 'auto';
     v.muted = true;
-    v.style.display = 'none';
     if (m.bg) v.src = m.bg;
     stage.appendChild(v);
     v.load();
@@ -375,12 +375,14 @@ function seekVideoFrame(frameIdx) {
     const t = frameIdx * step + 0.02;
     if (t >= base.duration) return false;
     v.currentTime = t;
-    v.muted = false;                        // 这个片段出声（画面由 canvas 叠加绘制）
+    v.muted = false;                        // 这个片段出声
     v.volume = Math.max(0.05, cfg.volume / 100) * 0.9;
     v.play().catch(() => {});
-    // 0.1s 后这个片段结束：暂停、静音（画面自然从 canvas 消失，不影响其他片段）
+    currentClip = v;                        // 背景画面 = 这个片段（播放 12 帧后停留）
+    // 12 帧动画 ≈ 0.4s（30fps）后暂停停留；连点会不断更新画面，声音不打断
     const that = v;
-    setTimeout(() => { that.pause(); that.muted = true; }, 100);
+    clearTimeout(that._clipT);
+    that._clipT = setTimeout(() => { that.pause(); that.muted = true; }, 400);
     return true;
   } catch (e) {}
   return false;
@@ -832,18 +834,24 @@ function shadeColor(color, amt) {
 }
 
 function render() {
-  // 背景：视频模式直接用 canvas 绘制视频帧（保证一定能显示），否则用渐变
+  // 背景：优先画最新点击的片段（播放 12 帧后停留在最后一帧），没有则画背景静止画面
   const v = els.bgVideo;
   const vReady = v && v.readyState >= 2 && v.videoWidth > 0;
-  if (videoActive() && vReady) {
-    // cover 铺满
-    const vw = v.videoWidth, vh = v.videoHeight;
-    const s = Math.max(W / vw, H / vh);
-    const dw = vw * s, dh = vh * s;
-    try {
-      ctx.drawImage(v, (W - dw) / 2, (H - dh) / 2, dw, dh);
-    } catch (e) {}
-  } else {
+  let bgDrawn = false;
+  if (videoActive()) {
+    const clip = currentClip && currentClip.readyState >= 2 && currentClip.videoWidth > 0 ? currentClip : null;
+    const src = clip || (vReady ? v : null);
+    if (src) {
+      const vw = src.videoWidth, vh = src.videoHeight;
+      const s = Math.max(W / vw, H / vh);
+      const dw = vw * s, dh = vh * s;
+      try {
+        ctx.drawImage(src, (W - dw) / 2, (H - dh) / 2, dw, dh);
+        bgDrawn = true;
+      } catch (e) {}
+    }
+  }
+  if (!bgDrawn) {
     const bg = ctx.createLinearGradient(0, 0, 0, H);
     bg.addColorStop(0, '#0d0d17');
     bg.addColorStop(0.6, '#131025');
@@ -851,19 +859,8 @@ function render() {
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, W, H);
   }
-  // 叠加播放中的 0.1s 片段（点击触发的视频）：画面盖在背景上，0.1s 后自动消失
-  if (videoPool.length > 0) {
-    for (const pv of videoPool) {
-      if (!pv.paused && pv.readyState >= 2 && pv.videoWidth > 0) {
-        try {
-          const pvs = Math.max(W / pv.videoWidth, H / pv.videoHeight);
-          ctx.drawImage(pv, (W - pv.videoWidth * pvs) / 2, (H - pv.videoHeight * pvs) / 2, pv.videoWidth * pvs, pv.videoHeight * pvs);
-        } catch (e) {}
-      }
-    }
-  }
   // 薄遮罩保证方块清晰
-  if (videoActive() && vReady) {
+  if (bgDrawn) {
     ctx.fillStyle = 'rgba(8,8,18,0.22)';
     ctx.fillRect(0, 0, W, H);
   }
@@ -1310,7 +1307,8 @@ window.__G = {
   get videoAssets() { return videoAssets; },
   get videoActive() { return videoActive(); },
   playFrameSound, frameSoundUrl,
-  seekVideoFrame, syncBgVideo
+  seekVideoFrame, syncBgVideo,
+  get currentClip() { return currentClip; }
 };
 </script>
 </body>
