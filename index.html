@@ -443,6 +443,36 @@ function playFrameSound(frameIdx) {
     return false;
   }
 }
+// 播放该方块位置的原声切片（3 段 0.2s 连续 ≈ 14 帧时长），独立音频，即时响应、互不打断
+function playClipSound(frameIdx) {
+  const m = videoAssets && videoAssets.m;
+  if (!m || !m.soundDir) return false;
+  try {
+    const dur = (els.bgVideo && els.bgVideo.duration) || 26.9;
+    const step = dur / (cfg.videoSteps || 50);
+    const baseIdx = Math.max(0, Math.round(frameIdx * step * 5));   // 视频时间 → 0.2s 切片索引
+    for (let i = 0; i < 3; i++) {
+      const idx = baseIdx + i;
+      if (idx >= m.count) break;
+      const url = m.soundDir + String(idx + 1).padStart(m.soundPad || 4, '0') + '.' + m.soundExt;
+      (function (ii) {
+        setTimeout(() => {
+          try {
+            const a = new Audio(url);
+            a.volume = Math.max(0.05, cfg.volume / 100) * 0.9;
+            const p = a.play();
+            if (p && p.catch) p.catch(() => __diag.add('clip_wav_fail', 'idx=' + idx));
+          } catch (e) {}
+        }, ii * 200);
+      })(i);
+    }
+    __diag.add('clip_sound', 'idx=' + frameIdx + ' seg=' + baseIdx);
+    return true;
+  } catch (e) {
+    __diag.add('clip_sound_exc', String(e).slice(0, 100));
+    return false;
+  }
+}
 // —— 点击片段播放：队列播放器 ——
 // 点击方块 → 从对应位置播放 12 帧动画（画面+音乐同步），播完停留；
 // 播放期间再点击 → 进队列排队，等当前 12 帧播完再播下一个（不打断）
@@ -455,10 +485,8 @@ function playClipAt(t) {
   __diag.add('play', 'seek t=' + t.toFixed(2) + ' ready=' + v.readyState + ' paused=' + v.paused);
   try {
     v.currentTime = t;
-    v.muted = false;
-    v.volume = Math.max(0.05, cfg.volume / 100) * 0.9;
-    const p = v.play();
-    if (p && p.catch) p.catch(err => { __diag.add('play_fail', String(err).slice(0, 120)); });
+    v.muted = true;    // 画面静音播放：声音由独立音频负责（手机端更可靠、不受视频播放卡顿影响）
+    v.play().catch(() => {});
   } catch (e) {
     __diag.add('play_exc', String(e).slice(0, 120));
   }
@@ -745,15 +773,13 @@ function hitBlock(b) {
   b.state = 'hit'; b.hitT = 0;
   S.score++; S.combo++; S.maxCombo = Math.max(S.maxCombo, S.combo);
   if (videoActive() && b.frameIdx !== undefined) {
-    // 声音融合：点击 → 视频播 14 帧；视频未就绪时降级切片声音，再不行用合成音
-    const seeked = seekVideoFrame(b.frameIdx);
-    if (seeked) {
-      __diag.add('hit_ok', 'idx=' + b.frameIdx + ' seek');
-    } else {
-      const snd = playFrameSound(b.frameIdx);
-      __diag.add('hit_fallback', 'idx=' + b.frameIdx + ' wav=' + snd);
-      if (!snd) playHitSound(b.col, S.combo);   // 最后兜底：合成音
-    }
+    // 声音画面解耦：
+    // 1) 立即合成音 —— 保证每次点击都有声音反馈
+    // 2) 原声切片（3 段 0.2s 连续 ≈ 14帧时长）—— 手机端独立音频，即时可靠可并发
+    // 3) 画面：video 静音播 14 帧动画（排队播放，播完停留）
+    playHitSound(b.col, S.combo);
+    playClipSound(b.frameIdx);
+    seekVideoFrame(b.frameIdx);
   } else {
     playHitSound(b.col, S.combo);
   }
