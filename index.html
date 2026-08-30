@@ -9,7 +9,6 @@
   html,body { height:100%; overflow:hidden; font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif; background:#0d0d17; color:#fff; user-select:none; }
   #stage { position:relative; width:100%; height:100%; }
   #bgVideo { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; z-index:0; opacity:.95; background:#000; }
-  .playVideo { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; z-index:0; pointer-events:none; }
   #cv { display:block; position:absolute; inset:0; width:100%; height:100%; touch-action:none; z-index:1; }
 
   /* ===== 顶部 HUD ===== */
@@ -342,47 +341,48 @@ function playFrameSound(frameIdx) {
     a.play().catch(() => {});
   } catch (e) {}
 }
-// —— 视频播放池：点击方块 → 独立播放 12 帧动画（音频同步），播完停留，互不打断 ——
-let videoPool = [];    // 临时播放用 video 元素池
-let poolIdx = 0;
-let currentClip = null;  // 当前背景画面来源（最新点击的片段，播放中或已停住）
-function ensurePool() {
-  if (videoPool.length > 0) return;
-  const N = 6;   // 池大小：同时最多并发 6 个点击
-  const m = videoAssets.m;
-  for (let i = 0; i < N; i++) {
-    const v = document.createElement('video');
-    v.className = 'playVideo';
-    v.playsInline = true;
-    v.preload = 'auto';
-    v.muted = true;
-    if (m.bg) v.src = m.bg;
-    stage.appendChild(v);
-    v.load();
-    videoPool.push(v);
-  }
+// —— 点击片段播放：队列播放器 ——
+// 点击方块 → 从对应位置播放 12 帧动画（画面+音乐同步），播完停留；
+// 播放期间再点击 → 进队列排队，等当前 12 帧播完再播下一个（不打断）
+let clipQueue = [];    // 等待播放的时间点队列
+let clipBusy = false;  // 当前是否有片段在播
+let clipTimer = null;  // 12帧播完计时器
+function playClipAt(t) {
+  const v = els.bgVideo;
+  clipBusy = true;
+  try {
+    v.currentTime = t;
+    v.muted = false;
+    v.volume = Math.max(0.05, cfg.volume / 100) * 0.9;
+    v.play().catch(() => {});
+  } catch (e) {}
+  clearTimeout(clipTimer);
+  clipTimer = setTimeout(() => {
+    // 12 帧播完：暂停停留（画面保留在最后一帧）
+    v.pause(); v.muted = true;
+    clipBusy = false;
+    // 播放队列里下一个（如果有点击排队）
+    if (clipQueue.length > 0) {
+      const next = clipQueue.shift();
+      playClipAt(next);
+    }
+  }, 400);   // 12帧 ≈ 0.4s（30fps）
 }
 function seekVideoFrame(frameIdx) {
   // 背景视频加载中或失败 → 降级用切片声音
   const base = els.bgVideo;
   if (!base || !(base.duration > 0)) return false;
   try {
-    ensurePool();
-    const v = videoPool[poolIdx % videoPool.length];
-    poolIdx++;
     // 歌时间点：整首歌按 videoSteps 等分
     const step = base.duration / (cfg.videoSteps || 20);
     const t = frameIdx * step + 0.02;
     if (t >= base.duration) return false;
-    v.currentTime = t;
-    v.muted = false;                        // 这个片段出声
-    v.volume = Math.max(0.05, cfg.volume / 100) * 0.9;
-    v.play().catch(() => {});
-    currentClip = v;                        // 背景画面 = 这个片段（播放 12 帧后停留）
-    // 12 帧动画 ≈ 0.4s（30fps）后暂停停留；连点会不断更新画面，声音不打断
-    const that = v;
-    clearTimeout(that._clipT);
-    that._clipT = setTimeout(() => { that.pause(); that.muted = true; }, 400);
+    if (clipBusy) {
+      // 正在播放 12 帧：排队等待，播完上一个再播这个
+      if (clipQueue.length < 30) clipQueue.push(t);
+      return true;
+    }
+    playClipAt(t);
     return true;
   } catch (e) {}
   return false;
@@ -622,12 +622,12 @@ function spawnBlockAt(col, demo) {
   S.blocks.push(b);
 }
 
-function speedBase() { return 130 + cfg.speed * 20; }   // 速度调慢：speed=5 → 230px/s
-function currentSpeed() { return speedBase() * (1 + Math.min(S.score * 0.015, 1.3)); }
-function rowH() { return blockSize() + 10; }   // 行距 = 方块高 + 间隙
+function speedBase() { return 90 + cfg.speed * 15; }   // 初始速度慢：speed=5 → 165px/s
+function currentSpeed() { return speedBase() * (1 + Math.min(S.score * 0.012, 1.2)); }
+function rowH() { return blockSize() * 1.8; }   // 行距加大（方块间留出近一个方块的间隙，更稀疏）
 function currentInterval() {
   // 行距 / 速度：无论速度快慢，方块都按固定行距整齐排列（一排一个、多排滚动）
-  return Math.max(0.05, rowH() / currentSpeed());
+  return Math.max(0.06, rowH() / currentSpeed());
 }
 
 function hitBlock(b) {
@@ -838,18 +838,14 @@ function render() {
   const v = els.bgVideo;
   const vReady = v && v.readyState >= 2 && v.videoWidth > 0;
   let bgDrawn = false;
-  if (videoActive()) {
-    const clip = currentClip && currentClip.readyState >= 2 && currentClip.videoWidth > 0 ? currentClip : null;
-    const src = clip || (vReady ? v : null);
-    if (src) {
-      const vw = src.videoWidth, vh = src.videoHeight;
-      const s = Math.max(W / vw, H / vh);
-      const dw = vw * s, dh = vh * s;
-      try {
-        ctx.drawImage(src, (W - dw) / 2, (H - dh) / 2, dw, dh);
-        bgDrawn = true;
-      } catch (e) {}
-    }
+  if (videoActive() && vReady) {
+    const vw = v.videoWidth, vh = v.videoHeight;
+    const s = Math.max(W / vw, H / vh);
+    const dw = vw * s, dh = vh * s;
+    try {
+      ctx.drawImage(v, (W - dw) / 2, (H - dh) / 2, dw, dh);
+      bgDrawn = true;
+    } catch (e) {}
   }
   if (!bgDrawn) {
     const bg = ctx.createLinearGradient(0, 0, 0, H);
@@ -1308,7 +1304,8 @@ window.__G = {
   get videoActive() { return videoActive(); },
   playFrameSound, frameSoundUrl,
   seekVideoFrame, syncBgVideo,
-  get currentClip() { return currentClip; }
+  get clipQueue() { return clipQueue; },
+  get clipBusy() { return clipBusy; }
 };
 </script>
 </body>
