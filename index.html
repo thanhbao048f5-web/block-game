@@ -376,6 +376,8 @@ window.onerror = function (msg, src, line) {
 // ================= 视频素材（video_assets/ 可选） =================
 let videoAssets = null; // {m: manifest, frames: [Image]}
 let bgCache = null;     // 背景上一帧缓存（视频 seek 时显示，避免闪黑）
+let bgLayer = null;     // 背景离屏层（手机帧图动画缓存，减少重绘）
+let bgLayerFrame = -1;  // bgLayer 当前对应的帧图索引
 function videoActive() { return cfg.videoMode && videoAssets && videoAssets.frames.length > 0; }
 function loadVideoAssets() {
   if (!window.VIDEO_MANIFEST) return;
@@ -423,16 +425,8 @@ function loadVideoAssets() {
     // 兜底：5 秒后还没就绪再尝试一次
     setTimeout(() => { if (v.readyState < 2) kick(); }, 5000);
   }
-  // 预加载前 12 段原声（玩家从视频开头点起：冷启动首次点击也即时有声，不用等网络）
-  if (location.protocol !== 'file:' && (window.AudioContext || window.webkitAudioContext)) {
-    try {
-      ensureAudio();
-      for (let i = 0; i < 12 && i < m.count; i++) {
-        const url = m.soundDir + String(i + 1).padStart(m.soundPad || 4, '0') + '.' + m.soundExt;
-        getClipBuffer(url);
-      }
-    } catch (e) {}
-  }
+  // 整段音频：一次下载，之后点击任意位置零延迟播放（连点不卡顿）
+  loadFullAudio();
 }
 function frameSoundUrl(frameIdx) {
   const m = videoAssets.m;
@@ -453,105 +447,163 @@ function playFrameSound(frameIdx) {
     return false;
   }
 }
+// —— 整段音频（full.wav）：一次下载，点击任意位置精确播放，连点零卡顿 ——
+let fullBuffer = null;   // 整段音频 AudioBuffer
+function loadFullAudio() {
+  const m = videoAssets && videoAssets.m;
+  if (!m || !m.full) return;
+  if (location.protocol === 'file:') return;   // file:// 无法 XHR，走旧切片方案
+  try { ensureAudio(); } catch (e) {}
+  if (!actx) return;
+  __diag.add('full_audio', 'loading ' + m.full);
+  const xhr = new XMLHttpRequest();
+  xhr.open('GET', m.full, true);
+  xhr.responseType = 'arraybuffer';
+  xhr.onload = () => {
+    if (xhr.status === 200 || xhr.status === 0) {
+      actx.decodeAudioData(xhr.response).then(b => {
+        fullBuffer = b;
+        __diag.add('full_audio', 'loaded ' + b.duration.toFixed(1) + 's');
+      }).catch(e => __diag.add('full_audio_fail', 'decode ' + String(e).slice(0, 80)));
+    } else {
+      __diag.add('full_audio_fail', 'http ' + xhr.status);
+    }
+  };
+  xhr.onerror = () => __diag.add('full_audio_fail', 'xhr error');
+  xhr.send();
+}
 // —— 原声切片播放：Web Audio 排程（解码缓存、连续无间隙、不受系统静音键/手势限制）——
 const clipSoundCache = new Map();   // url -> AudioBuffer
 const clipFetching = new Map();     // url -> Promise
 function getClipBuffer(url) {
   if (clipSoundCache.has(url)) return Promise.resolve(clipSoundCache.get(url));
   if (clipFetching.has(url)) return clipFetching.get(url);
-  const p = fetch(url).then(r => { if (!r.ok) throw new Error('http ' + r.status); return r.arrayBuffer(); })
-    .then(buf => actx.decodeAudioData(buf))
-    .then(b => { clipSoundCache.set(url, b); clipFetching.delete(url); return b; })
-    .catch(err => {
+  // 用 XHR 而非 fetch：微信/鸿蒙 WebView 对 fetch 支持不完整，XHR 兼容性最好
+  const p = new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', url, true);
+    xhr.responseType = 'arraybuffer';
+    xhr.onload = () => {
+      if (xhr.status === 200 || xhr.status === 0) {
+        actx.decodeAudioData(xhr.response).then(b => {
+          clipSoundCache.set(url, b); clipFetching.delete(url); resolve(b);
+        }).catch(err => {
+          clipFetching.delete(url);
+          __diag.add('clip_decode_fail', url.split('/').pop() + ' ' + err);
+          resolve(null);
+        });
+      } else {
+        clipFetching.delete(url);
+        __diag.add('clip_decode_fail', url.split('/').pop() + ' http ' + xhr.status);
+        resolve(null);
+      }
+    };
+    xhr.onerror = () => {
       clipFetching.delete(url);
-      __diag.add('clip_decode_fail', url.split('/').pop() + ' ' + err);
-      // 兜底：fetch/decode 失败时用 Audio 元素直接播
-      try {
-        const a = new Audio(url);
-        a.volume = Math.max(0.05, cfg.volume / 100) * 0.9;
-        const p = a.play();
-        if (p && p.catch) p.catch(() => {});
-      } catch (e) {}
-      return null;
-    });
+      __diag.add('clip_decode_fail', url.split('/').pop() + ' xhr error');
+      resolve(null);
+    };
+    xhr.send();
+  });
   clipFetching.set(url, p);
   return p;
 }
-// 播放该方块位置的原声（3 段 0.2s 连续 ≈ 14 帧时长），即时响应、互不打断
+// 播放该方块位置的原声：整段音频任意位置精确播放（一次下载零卡顿）；未就绪用合成音兜底
 function playClipSound(frameIdx) {
-  const m = videoAssets && videoAssets.m;
-  if (!m || !m.soundDir) return false;
-  try {
-    const dur = (els.bgVideo && els.bgVideo.duration) || 26.9;
-    const step = dur / (cfg.videoSteps || 50);
-    const baseIdx = Math.max(0, Math.round(frameIdx * step * 5));   // 视频时间 → 0.2s 切片索引
-    const urls = [];
-    for (let i = 0; i < 3; i++) {
-      const idx = baseIdx + i;
-      if (idx >= m.count) break;
-      urls.push(m.soundDir + String(idx + 1).padStart(m.soundPad || 4, '0') + '.' + m.soundExt);
-    }
-    if (location.protocol === 'file:') {
-      // 本地 file:// 无法 fetch：用 Audio 元素依次播放
-      urls.forEach((url, i) => {
-        setTimeout(() => {
-          try {
-            const a = new Audio(url);
-            a.volume = Math.max(0.05, cfg.volume / 100) * 0.9;
-            const p = a.play();
-            if (p && p.catch) p.catch(() => {});
-          } catch (e) {}
-        }, i * 200);
-      });
+  if (fullBuffer && actx) {
+    try {
+      const step = fullBuffer.duration / (cfg.videoSteps || 50);
+      const offset = Math.max(0, frameIdx * step);
+      const src = actx.createBufferSource();
+      src.buffer = fullBuffer;
+      const g = actx.createGain();
+      g.gain.value = Math.max(0.05, cfg.volume / 100) * 0.9;
+      src.connect(g); g.connect(master);
+      src.start(actx.currentTime + 0.02, offset, Math.min(0.6, fullBuffer.duration - offset));
+      __diag.add('clip_sound', 'idx=' + frameIdx + ' full@' + offset.toFixed(2));
       return true;
+    } catch (e) {
+      __diag.add('clip_sound_exc', String(e).slice(0, 100));
+      return false;
     }
-    if (!ensureAudio()) return false;
-    const startAt = actx.currentTime + 0.03;
-    Promise.all(urls.map(u => getClipBuffer(u))).then(buffers => {
-      buffers.forEach((buf, i) => {
-        if (!buf) return;
-        const src = actx.createBufferSource();
-        src.buffer = buf;
-        const g = actx.createGain();
-        g.gain.value = Math.max(0.05, cfg.volume / 100) * 0.9;
-        src.connect(g); g.connect(master);
-        src.start(startAt + i * 0.2);
-      });
-    });
-    __diag.add('clip_sound', 'idx=' + frameIdx + ' seg=' + baseIdx + ' actx=' + actx.state);
-    return true;
-  } catch (e) {
-    __diag.add('clip_sound_exc', String(e).slice(0, 100));
-    return false;
   }
+  // 整段音频未就绪：本地 file:// 用切片 wav 播放，线上用合成音兜底（就绪后自动切回原声）
+  if (location.protocol === 'file:') { playFrameSound(frameIdx); return false; }
+  playHitSound(0, S.combo);
+  return false;
 }
 // —— 点击片段播放：队列播放器 ——
-// 点击方块 → 从对应位置播放 12 帧动画（画面+音乐同步），播完停留；
-// 播放期间再点击 → 进队列排队，等当前 12 帧播完再播下一个（不打断）
-let clipQueue = [];    // 等待播放的时间点队列
+// 点击方块 → 从对应位置播放 14 帧动画（画面+音乐同步），播完停留；
+// 播放期间再点击 → 进队列排队，等当前 14 帧播完再播下一个（不打断）
+// 画面双通道：video 播放优先；video 在手机/微信不可用时自动降级为帧图动画（100% 可靠）
+let clipQueue = [];    // 等待播放的时间点队列 [{t, idx}]
 let clipBusy = false;  // 当前是否有片段在播
-let clipTimer = null;  // 12帧播完计时器
-function playClipAt(t) {
+let clipTimer = null;  // 14帧播完计时器
+let videoBroken = false;  // video 元素不可用标记（播放失败/卡住时置 true）
+let animFrames = [];   // 帧图动画序列（video 降级用）
+let animT0 = 0;
+let animActive = false;
+function playFrameAnim(frameIdx) {
+  const frames = videoAssets ? videoAssets.frames : [];
+  if (!frames.length) return;
+  const fi = Math.min(frames.length - 1, Math.round(frameIdx * (frames.length / (cfg.videoSteps || 50))));
+  animFrames = [];
+  for (let i = 0; i < 14; i++) {
+    if (fi + i < frames.length) animFrames.push(fi + i);
+  }
+  if (!animFrames.length) animFrames.push(fi);
+  animT0 = performance.now();
+  animActive = true;
+}
+// 手机/微信/鸿蒙环境：video 播放不稳，直接走帧图动画（本地图片永不卡）
+const IS_MOBILE = /Android|iPhone|iPad|iPod|MicroMessenger|HarmonyOS|Mobile/i.test(navigator.userAgent);
+function currentAnimFrame() {
+  if (!animActive || !animFrames.length) return null;
+  const el = (performance.now() - animT0) / 80;   // 80ms/帧 播 14 帧 ≈ 1.1s（流畅不卡）
+  if (el >= animFrames.length - 1) { animActive = false; return animFrames[animFrames.length - 1]; }
+  return animFrames[Math.floor(el)];
+}
+function playClipAt(t, frameIdx) {
   const v = els.bgVideo;
   clipBusy = true;
-  __diag.add('play', 'seek t=' + t.toFixed(2) + ' ready=' + v.readyState + ' paused=' + v.paused);
-  try {
-    v.currentTime = t;
-    v.muted = true;    // 画面静音播放：声音由独立音频负责（手机端更可靠、不受视频播放卡顿影响）
-    const pp = v.play();
-    if (pp && pp.catch) pp.catch(err => __diag.add('video_play_fail', String(err).slice(0, 100)));
-  } catch (e) {
-    __diag.add('play_exc', String(e).slice(0, 120));
+  __diag.add('play', 'seek t=' + t.toFixed(2) + ' ready=' + (v ? v.readyState : '?') + ' broken=' + videoBroken);
+  if (videoBroken) {
+    // video 已确认不可用：直接帧图动画（并暂停 video 省流量）
+    if (v) { try { v.pause(); } catch (e) {} }
+    playFrameAnim(frameIdx);
+  } else if (v) {
+    try {
+      v.currentTime = t;
+      v.muted = true;    // 画面静音播放：声音由独立音频负责
+      const pp = v.play();
+      if (pp && pp.catch) pp.catch(() => { videoBroken = true; playFrameAnim(frameIdx); });
+      // 检测 video 是否真的在播：500ms 后无进展 → 降级帧图动画
+      const startT = t;
+      setTimeout(() => {
+        if (videoBroken) return;
+        if (v.paused || v.currentTime < startT + 0.1) {
+          videoBroken = true;
+          __diag.add('video_degrade', 'frame anim fallback t=' + startT.toFixed(2));
+          playFrameAnim(frameIdx);
+        }
+      }, 500);
+    } catch (e) {
+      videoBroken = true;
+      __diag.add('play_exc', String(e).slice(0, 120));
+      playFrameAnim(frameIdx);
+    }
+  } else {
+    playFrameAnim(frameIdx);
   }
   clearTimeout(clipTimer);
   clipTimer = setTimeout(() => {
     // 14 帧播完：暂停停留（画面保留在最后一帧）
-    v.pause(); v.muted = true;
+    if (v && !videoBroken) { v.pause(); v.muted = true; }
     clipBusy = false;
     // 播放队列里下一个（如果有点击排队）
     if (clipQueue.length > 0) {
       const next = clipQueue.shift();
-      playClipAt(next);
+      playClipAt(next.t, next.idx);
     }
   }, 465);   // 14帧 ≈ 0.47s（30fps）
 }
@@ -569,10 +621,10 @@ function seekVideoFrame(frameIdx) {
     if (t >= base.duration) { __diag.add('tap_silent', 't out of range: ' + t.toFixed(2)); return false; }
     if (clipBusy) {
       // 正在播放片段：排队等待，播完上一个再播这个
-      if (clipQueue.length < 30) clipQueue.push(t);
+      if (clipQueue.length < 30) clipQueue.push({ t, idx: frameIdx });
       return true;
     }
-    playClipAt(t);
+    playClipAt(t, frameIdx);
     return true;
   } catch (e) {
     __diag.add('seek_exc', String(e).slice(0, 120));
@@ -1041,23 +1093,51 @@ function render() {
   const vReady = v && v.readyState >= 2 && v.videoWidth > 0;
   let bgDrawn = false;
   if (videoActive()) {
-    const vReady2 = vReady && !v.seeking;
+    const vReady2 = vReady && !v.seeking && !videoBroken;
     if (vReady2) {
+      // 桌面 video 路径：直接绘制（含防闪黑缓存）
       const vw = v.videoWidth, vh = v.videoHeight;
       const s = Math.max(W / vw, H / vh);
       const dw = vw * s, dh = vh * s;
       const dx = (W - dw) / 2, dy = (H - dh) / 2;
       try {
         ctx.drawImage(v, dx, dy, dw, dh);
-        // 同步缓存上一帧（seek 时用来避免闪黑）
         if (!bgCache) bgCache = document.createElement('canvas');
         if (bgCache.width !== W || bgCache.height !== H) { bgCache.width = W; bgCache.height = H; }
         bgCache.getContext('2d').drawImage(v, dx, dy, dw, dh);
         bgDrawn = true;
       } catch (e) {}
-    } else if (bgCache) {
-      // 视频正在 seek（画面暂不可用）：显示缓存帧，不闪黑
+    } else if (!videoBroken && bgCache) {
+      // video 正在 seek（画面暂不可用）：显示缓存帧，不闪黑
       try { ctx.drawImage(bgCache, 0, 0, W, H); bgDrawn = true; } catch (e) {}
+    }
+    // 手机/降级路径：帧图背景用离屏层缓存（动画帧变化才重绘，绘制量大减，不卡）
+    if (!bgDrawn && videoAssets && videoAssets.frames.length) {
+      const fi = currentAnimFrame();
+      const imgIdx = (fi !== null) ? fi : 0;
+      const img = videoAssets.frames[imgIdx];
+      if (img) {
+        if (!bgLayer || bgLayer.width !== W || bgLayer.height !== H) {
+          bgLayer = document.createElement('canvas');
+          bgLayer.width = W; bgLayer.height = H;
+          bgLayerFrame = -1;
+        }
+        if (imgIdx !== bgLayerFrame) {
+          const bctx = bgLayer.getContext('2d');
+          bctx.clearRect(0, 0, W, H);
+          const iw = img.width || 160, ih = img.height || 160;
+          const s = Math.max(W / iw, H / ih);
+          const dw = iw * s, dh = ih * s;
+          try {
+            bctx.drawImage(img, (W - dw) / 2, (H - dh) / 2, dw, dh);
+            bctx.fillStyle = 'rgba(8,8,18,0.22)';
+            bctx.fillRect(0, 0, W, H);
+          } catch (e) {}
+          bgLayerFrame = imgIdx;
+        }
+        ctx.drawImage(bgLayer, 0, 0);
+        bgDrawn = true;
+      }
     }
   }
   if (!bgDrawn) {
@@ -1179,19 +1259,22 @@ function handleTap(x, y) {
   }
 }
 
-// 点击处理：touchstart 为主力（微信/鸿蒙等 WebView 的 pointer 事件不可靠），pointerdown 兜底
+// 点击处理：触摸只走 touchstart（微信/鸿蒙等 WebView 的 pointer 事件不可靠且会重复触发），鼠标走 pointerdown
 let lastTapEvt = 0;
 function onTap(e) {
   ensureAudio();
   const now = performance.now();
-  if (now - lastTapEvt < 80) return;   // 同一触摸的 pointer+touch 双事件去重（快速连点不受影响）
+  if (now - lastTapEvt < 60) return;   // 双事件去重保险（同一触摸两事件间隔极小）
   lastTapEvt = now;
   __diag.add('evt', e.type);
   const p = canvasPos(e);
   handleTap(p.x, p.y);
 }
 cv.addEventListener('touchstart', e => { e.preventDefault(); onTap(e); }, { passive: false });
-cv.addEventListener('pointerdown', e => { onTap(e); });
+cv.addEventListener('pointerdown', e => {
+  if (e.pointerType === 'touch') return;   // 触摸已由 touchstart 处理，避免重复播放
+  onTap(e);
+});
 
 window.addEventListener('keydown', e => {
   ensureAudio();
@@ -1231,6 +1314,8 @@ function startGame() {
   S.shake = 0; S.flash = 0;
   // 视频模式：每局从视频开头开始（方块按 0,1,2… 顺序 = 视频正序，画面不跳）
   S.frameCounter = 0;
+  videoBroken = IS_MOBILE;   // 手机/微信直接帧图动画（video 在手机端 seek 卡顿）；桌面用 video
+  animFrames = [0]; animActive = false;   // 背景初始 = 视频开头帧图
   syncBgVideo(true);   // 背景停在视频开头画面
   S.screen = 'playing';
   els.ovStart.classList.add('hidden');
@@ -1257,6 +1342,7 @@ function goHome() {
   els.startBest.textContent = '🏆 历史最高分：' + cfg.best;
   S.blocks = []; S.particles = []; S.floaters = []; S.ripples = [];
   S.spawnTimer = 0.3;
+  animFrames = [0]; animActive = false;
   syncBgVideo(true);   // 菜单背景视频继续播放（氛围）
   hud.style.display = 'flex';
 }
@@ -1586,7 +1672,14 @@ window.__G = {
   seekVideoFrame, syncBgVideo, playClipSound,
   get clipQueue() { return clipQueue; },
   get clipBusy() { return clipBusy; },
-  get diag() { return __diag; }
+  get videoBroken() { return videoBroken; },
+  set videoBroken(v) { videoBroken = v; },
+  get animFrames() { return animFrames; },
+  get animActive() { return animActive; },
+  currentAnimFrame, playFrameAnim,
+  get diag() { return __diag; },
+  get fullBuffer() { return fullBuffer; },
+  set fullBuffer(v) { fullBuffer = v; }
 };
 </script>
 </body>
