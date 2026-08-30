@@ -423,6 +423,16 @@ function loadVideoAssets() {
     // 兜底：5 秒后还没就绪再尝试一次
     setTimeout(() => { if (v.readyState < 2) kick(); }, 5000);
   }
+  // 预加载前 12 段原声（玩家从视频开头点起：冷启动首次点击也即时有声，不用等网络）
+  if (location.protocol !== 'file:' && (window.AudioContext || window.webkitAudioContext)) {
+    try {
+      ensureAudio();
+      for (let i = 0; i < 12 && i < m.count; i++) {
+        const url = m.soundDir + String(i + 1).padStart(m.soundPad || 4, '0') + '.' + m.soundExt;
+        getClipBuffer(url);
+      }
+    } catch (e) {}
+  }
 }
 function frameSoundUrl(frameIdx) {
   const m = videoAssets.m;
@@ -816,11 +826,8 @@ function hitBlock(b) {
   b.state = 'hit'; b.hitT = 0;
   S.score++; S.combo++; S.maxCombo = Math.max(S.maxCombo, S.combo);
   if (videoActive() && b.frameIdx !== undefined) {
-    // 声音画面解耦：
-    // 1) 立即合成音 —— 保证每次点击都有声音反馈
-    // 2) 原声切片（3 段 0.2s 连续 ≈ 14帧时长）—— 手机端独立音频，即时可靠可并发
-    // 3) 画面：video 静音播 14 帧动画（排队播放，播完停留）
-    playHitSound(b.col, S.combo);
+    // 视频模式：只播该方块位置的原声（Web Audio 排程，连续无间隙）
+    // 声音画面解耦：画面由 video 静音播 14 帧动画（排队播放，播完停留）
     playClipSound(b.frameIdx);
     seekVideoFrame(b.frameIdx);
   } else {
