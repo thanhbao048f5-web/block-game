@@ -361,7 +361,7 @@ function playClipAt(t) {
   } catch (e) {}
   clearTimeout(clipTimer);
   clipTimer = setTimeout(() => {
-    // 12 帧播完：暂停停留（画面保留在最后一帧）
+    // 14 帧播完：暂停停留（画面保留在最后一帧）
     v.pause(); v.muted = true;
     clipBusy = false;
     // 播放队列里下一个（如果有点击排队）
@@ -369,7 +369,7 @@ function playClipAt(t) {
       const next = clipQueue.shift();
       playClipAt(next);
     }
-  }, 400);   // 12帧 ≈ 0.4s（30fps）
+  }, 465);   // 14帧 ≈ 0.47s（30fps）
 }
 function seekVideoFrame(frameIdx) {
   // 背景视频加载中或失败 → 降级用切片声音
