@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>⬇ 下落方块音游</title>
 <style>
-  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  html,body { height:100%; overflow:hidden; font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif; background:#0d0d17; color:#fff; user-select:none; }
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; -webkit-touch-callout:none; }
+  html,body { height:100%; overflow:hidden; font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif; background:#0d0d17; color:#fff; user-select:none; -webkit-user-select:none; }
   #stage { position:relative; width:100%; height:100%; }
   #bgVideo { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; z-index:0; opacity:.95; background:#000; }
   #cv { display:block; position:absolute; inset:0; width:100%; height:100%; touch-action:none; z-index:1; }
@@ -298,6 +298,7 @@ const S = {
   blocks: [],              // {col,x,y,size,speed,state,hitT,seed}
   particles: [],           // {x,y,vx,vy,life,max,color,size}
   floaters: [],            // {x,y,text,life,color}
+  ripples: [],             // 点空反馈波纹 {x,y,r,max,life,maxLife}
   spawnTimer: 0,
   shake: 0, flash: 0,
   frameCounter: 0,     // 视频模式：下一块使用的视频片段序号
@@ -712,6 +713,13 @@ function update(dt) {
     if (f.life <= 0) { S.floaters.splice(i, 1); continue; }
     f.y -= 55 * dt;
   }
+  // 波纹（点空反馈）
+  for (let i = S.ripples.length - 1; i >= 0; i--) {
+    const rp = S.ripples[i];
+    rp.life -= dt;
+    if (rp.life <= 0) { S.ripples.splice(i, 1); continue; }
+    rp.r = rp.max * (1 - rp.life / rp.maxLife);
+  }
   // 震动 / 红闪衰减
   if (S.shake > 0) S.shake -= dt;
   if (S.flash > 0) S.flash -= dt;
@@ -930,6 +938,16 @@ function render() {
   }
   ctx.globalAlpha = 1;
 
+  // 波纹（点空反馈）
+  for (const rp of S.ripples) {
+    const a = Math.max(0, rp.life / rp.maxLife);
+    ctx.strokeStyle = 'rgba(255,209,102,' + (a * 0.8) + ')';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(rp.x, rp.y, rp.r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
   // 红闪
   if (S.flash > 0) {
     ctx.fillStyle = `rgba(255,0,60,${S.flash * 0.35})`;
@@ -941,23 +959,27 @@ function render() {
 // ================= 输入 =================
 function canvasPos(e) {
   const r = cv.getBoundingClientRect();
-  const t = e.touches ? e.touches[0] : e;
+  const t = (e.touches && e.touches.length) ? e.touches[0]
+    : (e.changedTouches && e.changedTouches.length) ? e.changedTouches[0] : e;
   return { x: t.clientX - r.left, y: t.clientY - r.top };
 }
 
 function handleTap(x, y) {
   if (S.screen === 'playing') {
+    // 手机端：扩大命中容差（手指比鼠标粗，允许点偏一点）
+    const pad = Math.max(14, blockSize() * 0.14);
     let hit = null;
     for (const b of S.blocks) {
       if (b.state !== 'falling') continue;
-      if (x >= b.x && x <= b.x + b.size && y >= b.y && y <= b.y + b.size) {
+      if (x >= b.x - pad && x <= b.x + b.size + pad && y >= b.y - pad && y <= b.y + b.size + pad) {
         if (!hit || b.y > hit.y) hit = b; // 取最靠近判定线的
       }
     }
     if (hit) {
       hitBlock(hit);
     } else {
-      // 点空
+      // 点空：显示扩散波纹提示（有反馈，不会感觉"没反应"）
+      S.ripples.push({ x, y, r: 8, max: 26, life: 0.32, maxLife: 0.32 });
       S.combo = 0; S.flash = 0.2;
       playMissSound();
       if (cfg.strict) { S.life--; S.shake = 0.3; updateHUD(); if (S.life <= 0) setTimeout(gameOver, 300); }
@@ -971,6 +993,15 @@ cv.addEventListener('pointerdown', e => {
   const p = canvasPos(e);
   handleTap(p.x, p.y);
 });
+// 兼容不支持 pointer 事件的老手机浏览器（部分安卓 WebView）
+if (!window.PointerEvent) {
+  cv.addEventListener('touchstart', e => {
+    e.preventDefault();
+    ensureAudio();
+    const p = canvasPos(e);
+    handleTap(p.x, p.y);
+  }, { passive: false });
+}
 
 window.addEventListener('keydown', e => {
   ensureAudio();
@@ -1003,7 +1034,7 @@ function updateHUD() {
 // ================= 流程控制 =================
 function startGame() {
   ensureAudio();
-  S.blocks = []; S.particles = []; S.floaters = [];
+  S.blocks = []; S.particles = []; S.floaters = []; S.ripples = [];
   S.score = 0; S.combo = 0; S.maxCombo = 0;
   S.life = 3; S.maxLife = 3;
   S.spawnTimer = 0.6;
@@ -1034,7 +1065,7 @@ function goHome() {
   els.ovPause.classList.add('hidden');
   els.ovStart.classList.remove('hidden');
   els.startBest.textContent = '🏆 历史最高分：' + cfg.best;
-  S.blocks = []; S.particles = []; S.floaters = [];
+  S.blocks = []; S.particles = []; S.floaters = []; S.ripples = [];
   S.spawnTimer = 0.3;
   syncBgVideo(true);   // 菜单背景视频继续播放（氛围）
   hud.style.display = 'flex';
