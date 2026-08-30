@@ -622,7 +622,7 @@ function spawnBlockAt(col, demo) {
   S.blocks.push(b);
 }
 
-function speedBase() { return 90 + cfg.speed * 15; }   // 初始速度慢：speed=5 → 165px/s
+function speedBase() { return 110 + cfg.speed * 18; }   // speed=5 → 200px/s（不快不慢）
 function currentSpeed() { return speedBase() * (1 + Math.min(S.score * 0.012, 1.2)); }
 function rowH() { return blockSize() * 1.8; }   // 行距加大（方块间留出近一个方块的间隙，更稀疏）
 function currentInterval() {
